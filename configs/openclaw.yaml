@@ -8,9 +8,9 @@ orchestrator:
 
   # LLM backend — "auto" uses the model router for intelligent tier selection
   llm:
-    provider: "ollama"
-    model: "auto"
-    endpoint: "http://localhost:11434"
+    provider: "anthropic"
+    model: "claude-opus-4-6"
+    endpoint: "https://api.anthropic.com"
     fallback_model: "qwen2.5:7b"
 
   # Model routing configuration
@@ -21,8 +21,8 @@ orchestrator:
       local_small: "qwen2.5:0.5b"
       local_large: "qwen2.5:7b"
       local_code: "qwen2.5-coder:7b"
-      cloud_economy: "claude-sonnet-4-20250514"
-      cloud_premium: "claude-opus-4-20250514"
+      cloud_economy: "claude-sonnet-4-6"
+      cloud_premium: "claude-opus-4-6"
 
   # Memory integration
   memory:

@@ -48,8 +48,8 @@ TIERS = {
     "local_large": {"provider": "ollama", "model": "qwen2.5:7b"},
     "local_max": {"provider": "ollama", "model": "qwen2.5:14b"},
     "local_code": {"provider": "ollama", "model": "qwen2.5-coder:7b"},
-    "cloud_economy": {"provider": "anthropic", "model": "claude-sonnet-4-20250514"},
-    "cloud_premium": {"provider": "anthropic", "model": "claude-opus-4-20250514"},
+    "cloud_economy": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "cloud_premium": {"provider": "anthropic", "model": "claude-opus-4-6"},
 }
 
 # Task type → complexity → tier

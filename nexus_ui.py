@@ -644,6 +644,310 @@ def _run_key_setup():
     except Exception as e:
         print(f"  [key setup error: {e}]")
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# OPENCLAW ORCHESTRATOR — agent delegation and skill execution
+# ═══════════════════════════════════════════════════════════════════════════
+
+class OpenClawOrchestrator:
+    """Connects the chat loop to agents and skills via the Strategist."""
+
+    SKILL_REGISTRY = {
+        "run-simulation": {
+            "description": "Run MiroFish trading simulation",
+            "params": ["--agents", "--rounds", "--market", "--strategy"],
+        },
+        "trading-simulator": {
+            "description": "Crypto trading simulation with real price data",
+            "params": ["--coin", "--days", "--strategy", "--agents", "--capital"],
+        },
+        "lead-generator": {
+            "description": "Real estate lead generation and skip-tracing",
+            "params": ["--location", "--property_type", "--max_results"],
+        },
+        "content-creator": {
+            "description": "Generate blog posts and content",
+            "params": ["--topic", "--style", "--length"],
+        },
+        "search-memory": {
+            "description": "Search Nexus semantic memory",
+            "params": ["query"],
+        },
+        "store-memory": {
+            "description": "Store information to memory",
+            "params": ["content", "--type", "--tags", "--source", "--importance"],
+        },
+        "ask-questions": {
+            "description": "RAG-powered Q&A using memory context",
+            "params": ["question"],
+        },
+        "guardian-review": {
+            "description": "Guardian triple-check safety review",
+            "params": ["proposal", "--action", "--risk"],
+        },
+        "create-agent": {
+            "description": "Create a new Nexus agent",
+            "params": ["--name", "--role", "--directives"],
+        },
+    }
+
+    def __init__(self, router):
+        self.router = router
+        self.nexus_home = Path(os.environ.get("NEXUS_HOME", Path.home() / "nexus"))
+        self._load_identities()
+
+    def _load_identities(self):
+        """Load agent identity files."""
+        self.identities = {}
+        agents_dir = self.nexus_home / "agents"
+        if agents_dir.exists():
+            for agent_dir in agents_dir.iterdir():
+                id_file = agent_dir / "IDENTITY.md"
+                if id_file.exists():
+                    try:
+                        self.identities[agent_dir.name] = id_file.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    except Exception:
+                        pass
+
+    def classify_intent(self, user_input):
+        """Ask the Strategist whether this is a task or casual chat.
+
+        Returns a JSON plan if task, or None if casual chat.
+        Uses Opus 4.6 via the router's cloud_premium tier.
+        """
+        skill_list = "\n".join(
+            f"  - {name}: {info['description']} (params: {', '.join(info['params'])})"
+            for name, info in self.SKILL_REGISTRY.items()
+        )
+
+        strategist_identity = self.identities.get("strategist", "You are the Strategist agent.")
+
+        prompt = f"""{strategist_identity}
+
+You are deciding how to handle a user message. You have these skills available:
+{skill_list}
+
+User message: "{user_input}"
+
+If this is a task that should invoke one or more skills, respond with a JSON plan:
+{{
+  "type": "task",
+  "summary": "brief description of what you'll do",
+  "steps": [
+    {{"skill": "skill-name", "args": {{"param": "value"}}, "reason": "why this step"}}
+  ]
+}}
+
+If this is casual conversation, a question, or doesn't need skills, respond with:
+{{"type": "chat"}}
+
+Respond with ONLY the JSON, nothing else."""
+
+        try:
+            response = self.router.generate_sync(
+                prompt,
+                task_hint="analysis:high",
+                system_prompt="You are the Nexus Strategist. Respond with only valid JSON.",
+            )
+            # Extract JSON from response
+            import re as _re
+            json_match = _re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                plan = json.loads(json_match.group())
+                if plan.get("type") == "task" and plan.get("steps"):
+                    return plan
+        except Exception:
+            pass
+        return None
+
+    def execute_plan(self, plan, term, colors):
+        """Execute a task plan by running skills sequentially."""
+        import subprocess
+
+        rst = term.reset()
+        dim_c = colors["dim"]
+        cool_c = colors["cool"]
+        warn_c = [255, 107, 53]
+
+        summary = plan.get("summary", "executing task")
+        steps = plan.get("steps", [])
+
+        sys.stdout.write(
+            term.fg(*cool_c)
+            + f"\n  [strategist] {summary}\n"
+            + term.fg(*dim_c)
+            + f"  [{len(steps)} step{'s' if len(steps) != 1 else ''}]\n"
+            + rst
+        )
+
+        results = []
+        for i, step in enumerate(steps):
+            skill_name = step.get("skill", "")
+            args = step.get("args", {})
+            reason = step.get("reason", "")
+
+            if skill_name not in self.SKILL_REGISTRY:
+                sys.stdout.write(
+                    term.fg(*warn_c) + f"  [{i+1}] skip: unknown skill '{skill_name}'\n" + rst
+                )
+                continue
+
+            sys.stdout.write(
+                term.fg(*dim_c)
+                + f"  [{i+1}] {skill_name}"
+                + (f" — {reason}" if reason else "")
+                + "\n"
+                + rst
+            )
+            sys.stdout.flush()
+
+            # Build the command
+            skill_path = self.nexus_home / "skills" / skill_name / "run"
+            if not skill_path.exists():
+                sys.stdout.write(
+                    term.fg(*warn_c) + f"      skill script not found\n" + rst
+                )
+                continue
+
+            cmd = ["bash", str(skill_path)]
+            for key, val in args.items():
+                if not key.startswith("--"):
+                    # Positional arg
+                    cmd.append(str(val))
+                else:
+                    cmd.append(key)
+                    cmd.append(str(val))
+
+            # Execute the skill
+            try:
+                env = os.environ.copy()
+                env["NEXUS_HOME"] = str(self.nexus_home)
+
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 min max per skill
+                    env=env,
+                )
+
+                output = proc.stdout.strip()
+                if proc.returncode != 0:
+                    err = proc.stderr.strip() or "unknown error"
+                    sys.stdout.write(
+                        term.fg(*warn_c) + f"      error: {err[:200]}\n" + rst
+                    )
+                    results.append({"skill": skill_name, "status": "error", "error": err[:500]})
+                else:
+                    # Try to parse JSON output
+                    try:
+                        result_data = json.loads(output)
+                        results.append({"skill": skill_name, "status": "ok", "result": result_data})
+                        # Print key metrics from the result
+                        self._print_result_summary(result_data, skill_name, term, colors)
+                    except json.JSONDecodeError:
+                        # Print raw output (truncated)
+                        if output:
+                            for line in output.split("\n")[:10]:
+                                sys.stdout.write(
+                                    term.fg(*colors["text"]) + f"      {line}\n" + rst
+                                )
+                        results.append({"skill": skill_name, "status": "ok", "raw": output[:1000]})
+
+            except subprocess.TimeoutExpired:
+                sys.stdout.write(
+                    term.fg(*warn_c) + f"      timeout (5 min)\n" + rst
+                )
+                results.append({"skill": skill_name, "status": "timeout"})
+            except Exception as e:
+                sys.stdout.write(
+                    term.fg(*warn_c) + f"      failed: {e}\n" + rst
+                )
+                results.append({"skill": skill_name, "status": "error", "error": str(e)})
+
+        # Ask Strategist to summarize results if we got any
+        if results and any(r.get("status") == "ok" for r in results):
+            self._summarize_results(plan, results, term, colors)
+
+        return results
+
+    def _print_result_summary(self, data, skill_name, term, colors):
+        """Print key metrics from a skill result."""
+        rst = term.reset()
+        cool_c = colors["cool"]
+        text_c = colors["text"]
+
+        if skill_name in ("run-simulation", "trading-simulator"):
+            roi = data.get("roi_mean", data.get("mean_roi_pct", "?"))
+            sharpe = data.get("sharpe_ratio", "?")
+            win = data.get("win_rate", data.get("win_rate_pct", "?"))
+            sys.stdout.write(
+                term.fg(*cool_c)
+                + f"      ROI: {roi}% | Sharpe: {sharpe} | Win: {win}%\n"
+                + rst
+            )
+        elif skill_name == "lead-generator":
+            total = data.get("total_found", 0)
+            cost = data.get("cost_estimate_usd", 0)
+            sys.stdout.write(
+                term.fg(*cool_c)
+                + f"      {total} leads found | est. cost: ${cost}\n"
+                + rst
+            )
+        elif skill_name == "content-creator":
+            title = data.get("title", "?")
+            words = data.get("word_count", 0)
+            sys.stdout.write(
+                term.fg(*cool_c)
+                + f"      \"{title}\" ({words} words)\n"
+                + rst
+            )
+        elif skill_name == "ask-questions":
+            answer = data.get("answer", "")
+            if answer:
+                for line in answer.split("\n")[:8]:
+                    sys.stdout.write(
+                        term.fg(*text_c) + f"      {line}\n" + rst
+                    )
+        elif skill_name == "search-memory":
+            if isinstance(data, list):
+                for r in data[:5]:
+                    content = str(r.get("content", ""))[:100]
+                    sys.stdout.write(
+                        term.fg(*text_c) + f"      • {content}\n" + rst
+                    )
+
+    def _summarize_results(self, plan, results, term, colors):
+        """Have the Strategist summarize what was accomplished."""
+        rst = term.reset()
+        cool_c = colors["cool"]
+
+        results_text = json.dumps(results, indent=2, default=str)[:3000]
+        prompt = (
+            f"You just executed this plan: {plan.get('summary', '')}\n"
+            f"Results:\n{results_text}\n\n"
+            f"Give a concise 2-3 sentence summary of what was accomplished and any key findings. "
+            f"Be direct and highlight numbers."
+        )
+
+        sys.stdout.write(term.fg(*cool_c) + "\n  [strategist] " + rst)
+        sys.stdout.flush()
+
+        try:
+            for token in self.router.generate(
+                prompt,
+                task_hint="analysis:medium",
+                system_prompt="You are the Nexus Strategist. Be concise and data-driven.",
+            ):
+                sys.stdout.write(term.fg(*colors["text"]) + token + rst)
+                sys.stdout.flush()
+                time.sleep(0.01)
+        except Exception:
+            pass
+        sys.stdout.write("\n")
+
 def _run_updater():
     """Run the Nexus updater."""
     try:
@@ -711,6 +1015,17 @@ def chat_loop(term, cfg):
             + "\n"
         )
 
+    # Initialize OpenClaw orchestrator
+    orchestrator = None
+    if use_router:
+        try:
+            orchestrator = OpenClawOrchestrator(router)
+            sys.stdout.write(
+                term.fg(*dim_c) + "  [openclaw active \u2014 agents ready]\n" + rst
+            )
+        except Exception:
+            pass
+
     # Conversation history (last N turns for context)
     history = []
 
@@ -762,7 +1077,14 @@ def chat_loop(term, cfg):
             sys.stdout.write("    /update    — Update Nexus to the latest version\n")
             sys.stdout.write("    /dashboard — Open the visual dashboard in browser\n")
             sys.stdout.write("    /help      — Show this help\n")
-            sys.stdout.write("    /quit      — Exit Nexus\n" + rst + "\n")
+            sys.stdout.write("    /quit      — Exit Nexus\n\n")
+            sys.stdout.write("  Tasks (auto-detected, handled by agents):\n")
+            sys.stdout.write("    \"run a simulation\"          — MiroFish trading sim\n")
+            sys.stdout.write("    \"generate leads in Miami\"   — Real estate lead gen\n")
+            sys.stdout.write("    \"write a blog post about X\" — Content creation\n")
+            sys.stdout.write("    \"search memory for X\"       — Semantic memory search\n")
+            sys.stdout.write("    \"create an agent for X\"     — Spawn new agent\n")
+            sys.stdout.write(rst + "\n")
             continue
 
         history.append(user_input)
@@ -770,44 +1092,66 @@ def chat_loop(term, cfg):
         sys.stdout.write(term.fg(*cfg["colors"]["cool"]) + "  \u25c2 " + rst)
         sys.stdout.flush()
 
-        if use_router and has_backend:
-            # Use router for intelligent model selection
-            decision = router.route(user_input)
-            sys.stdout.write(
-                term.fg(*dim_c) + f"[routed \u2192 {decision.model}] " + rst
-            )
-            sys.stdout.flush()
-
-            context = "\n".join(f"User: {h}" for h in history[-5:])
-            full_prompt = f"{context}\nUser: {user_input}\nNexus:"
-
-            for token in router.generate(
-                full_prompt,
-                task=user_input,
-                system_prompt=chat_cfg.get("system_prompt"),
-            ):
-                sys.stdout.write(term.fg(*user_c) + token + rst)
+        # Try OpenClaw orchestrator first — delegate tasks to agents
+        task_handled = False
+        if orchestrator and has_backend:
+            try:
+                sys.stdout.write(
+                    term.fg(*dim_c) + "[classifying...] " + rst
+                )
                 sys.stdout.flush()
-                time.sleep(chat_cfg["typewriter_delay"])
-            sys.stdout.write("\n")
-
-        elif has_ollama:
-            # Fallback: direct Ollama without router
-            context = "\n".join(f"User: {h}" for h in history[-5:])
-            full_prompt = f"{context}\nUser: {user_input}\nNexus:"
-
-            for token in ollama_generate(full_prompt, cfg, model_override=model):
-                sys.stdout.write(term.fg(*user_c) + token + rst)
+                plan = orchestrator.classify_intent(user_input)
+                # Clear the classifying message
+                sys.stdout.write("\r" + " " * 40 + "\r")
+                sys.stdout.write(term.fg(*cfg["colors"]["cool"]) + "  \u25c2 " + rst)
                 sys.stdout.flush()
-                time.sleep(chat_cfg["typewriter_delay"])
-            sys.stdout.write("\n")
-        else:
-            sys.stdout.write(
-                term.fg(*dim_c)
-                + "Nexus core is offline. Start Ollama to enable AI responses."
-                + rst
-                + "\n"
-            )
+                if plan:
+                    orchestrator.execute_plan(plan, term, cfg["colors"])
+                    task_handled = True
+            except Exception as e:
+                sys.stdout.write(
+                    term.fg(*dim_c) + f"[orchestrator: {e}] " + rst
+                )
+
+        if not task_handled:
+            if use_router and has_backend:
+                # Chat mode: use router for intelligent model selection
+                decision = router.route(user_input)
+                sys.stdout.write(
+                    term.fg(*dim_c) + f"[{decision.model}] " + rst
+                )
+                sys.stdout.flush()
+
+                context = "\n".join(f"User: {h}" for h in history[-5:])
+                full_prompt = f"{context}\nUser: {user_input}\nNexus:"
+
+                for token in router.generate(
+                    full_prompt,
+                    task=user_input,
+                    system_prompt=chat_cfg.get("system_prompt"),
+                ):
+                    sys.stdout.write(term.fg(*user_c) + token + rst)
+                    sys.stdout.flush()
+                    time.sleep(chat_cfg["typewriter_delay"])
+                sys.stdout.write("\n")
+
+            elif has_ollama:
+                # Fallback: direct Ollama without router
+                context = "\n".join(f"User: {h}" for h in history[-5:])
+                full_prompt = f"{context}\nUser: {user_input}\nNexus:"
+
+                for token in ollama_generate(full_prompt, cfg, model_override=model):
+                    sys.stdout.write(term.fg(*user_c) + token + rst)
+                    sys.stdout.flush()
+                    time.sleep(chat_cfg["typewriter_delay"])
+                sys.stdout.write("\n")
+            else:
+                sys.stdout.write(
+                    term.fg(*dim_c)
+                    + "Nexus core is offline. Start Ollama to enable AI responses."
+                    + rst
+                    + "\n"
+                )
 
         # Try to store in memory (best-effort)
         try:
