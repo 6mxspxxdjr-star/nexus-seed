@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# ask-questions skill runner — RAG with local LLM
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+QUESTION="${1:?Usage: run <question> [--model MODEL] [--max_context N]}"
+shift
+
+MODEL="qwen2.5:14b"
+MAX_CTX=5
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model) MODEL="$2"; shift 2 ;;
+        --max_context) MAX_CTX="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+exec "$VENV" << PYEOF
+import sys, json, requests
+sys.path.insert(0, '$NEXUS_HOME/scripts')
+from memory_system import MemorySystem
+
+ms = MemorySystem('$NEXUS_HOME')
+
+# Retrieve relevant context from memory
+context_results = ms.search('$QUESTION', top_k=$MAX_CTX)
+context_text = "\n\n".join(
+    f"[Memory {r['id']}] {r['content']}" for r in context_results
+)
+
+# Build prompt with context
+prompt = f"""Use the following context from memory to answer the question.
+If the context doesn't contain relevant information, say so.
+
+## Context
+{context_text}
+
+## Question
+$QUESTION
+
+## Answer"""
+
+# Query Ollama
+response = requests.post(
+    "http://localhost:11434/api/generate",
+    json={"model": "$MODEL", "prompt": prompt, "stream": False},
+    timeout=120
+)
+response.raise_for_status()
+data = response.json()
+
+result = {
+    "answer": data.get("response", ""),
+    "sources": [r["id"] for r in context_results],
+    "model": "$MODEL",
+    "tokens_used": data.get("eval_count", 0)
+}
+print(json.dumps(result, indent=2))
+PYEOF

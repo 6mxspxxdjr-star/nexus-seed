@@ -1,0 +1,76 @@
+# Nexus Autoresearch Configuration
+# Defines the optimization search space and schedule
+
+autoresearch:
+  version: "1.0"
+  train_script: "${NEXUS_HOME}/optimizer/train.py"
+  log_file: "${NEXUS_HOME}/optimizer/optimization_log.jsonl"
+
+  # Optimization target
+  objective: "maximize"  # maximize the metric from train.py
+  metric_name: "composite_score"
+
+  # Search space — autoresearch modifies PARAMS in train.py within these bounds
+  search_space:
+    num_agents:
+      type: "int"
+      min: 50
+      max: 500
+      step: 50
+
+    num_rounds:
+      type: "int"
+      min: 10
+      max: 200
+      step: 10
+
+    lookback_min:
+      type: "int"
+      min: 1
+      max: 10
+
+    lookback_max:
+      type: "int"
+      min: 10
+      max: 50
+
+    threshold_min:
+      type: "float"
+      min: 0.001
+      max: 0.05
+      step: 0.005
+
+    threshold_max:
+      type: "float"
+      min: 0.02
+      max: 0.15
+      step: 0.01
+
+    momentum_weight:
+      type: "float"
+      min: 0.0
+      max: 1.0
+      step: 0.1
+
+    mean_reversion_weight:
+      type: "float"
+      min: 0.0
+      max: 1.0
+      step: 0.1
+
+    position_sizing:
+      type: "categorical"
+      values: ["equal", "kelly", "risk_parity"]
+
+  # Schedule
+  schedule:
+    mode: "overnight"  # Run optimizations between midnight and 6am
+    start_hour: 0
+    end_hour: 6
+    max_iterations: 50
+    timeout_minutes: 300  # 5 hours max
+
+  # Early stopping
+  early_stopping:
+    patience: 10  # Stop if no improvement after 10 iterations
+    min_improvement: 0.001

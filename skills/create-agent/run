@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# create-agent skill runner
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+NAME=""
+ROLE=""
+DIRECTIVES=""
+CAPABILITIES=""
+BOUNDARIES=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --name) NAME="$2"; shift 2 ;;
+        --role) ROLE="$2"; shift 2 ;;
+        --directives) DIRECTIVES="$2"; shift 2 ;;
+        --capabilities) CAPABILITIES="$2"; shift 2 ;;
+        --boundaries) BOUNDARIES="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+[[ -z "$NAME" ]] && echo "Error: --name required" && exit 1
+[[ -z "$ROLE" ]] && echo "Error: --role required" && exit 1
+
+# Request Guardian approval first
+GUARDIAN_RESULT=$("$NEXUS_HOME/skills/guardian-review/run" \
+    "Create new agent: $NAME — $ROLE" \
+    --action "create-agent" \
+    --risk "medium" 2>&1) || true
+
+if echo "$GUARDIAN_RESULT" | grep -q "REJECTED"; then
+    echo "$GUARDIAN_RESULT"
+    exit 1
+fi
+
+# Create agent directory and identity
+AGENT_DIR="$NEXUS_HOME/agents/$NAME"
+mkdir -p "$AGENT_DIR"
+
+cat > "$AGENT_DIR/IDENTITY.md" << EOF
+# ${NAME} Agent
+
+## Role
+$ROLE
+
+## Core Directives
+$(echo "$DIRECTIVES" | tr '\\n' '\n' | sed 's/^/- /')
+
+## Capabilities
+$(echo "$CAPABILITIES" | tr '\\n' '\n' | sed 's/^/- /')
+
+## Boundaries
+$(echo "$BOUNDARIES" | tr '\\n' '\n' | sed 's/^/- /')
+- Must log all actions to memory
+- Critical actions require Guardian approval
+EOF
+
+# Register with OpenClaw if available
+REG_STATUS="pending"
+if command -v openclaw &>/dev/null; then
+    openclaw agent register "$NAME" --identity "$AGENT_DIR/IDENTITY.md" && REG_STATUS="registered"
+fi
+
+# Store creation in memory
+"$NEXUS_HOME/skills/store-memory/run" \
+    "Created new agent: $NAME — $ROLE" \
+    --type procedural --source "create-agent" --importance 0.7
+
+echo "{\"agent_id\": \"$NAME\", \"status\": \"created\", \"identity_path\": \"$AGENT_DIR/IDENTITY.md\", \"registration_status\": \"$REG_STATUS\"}"

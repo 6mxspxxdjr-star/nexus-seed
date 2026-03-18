@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# trading-simulator profit engine
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+COIN="bitcoin"
+DAYS=30
+STRATEGY="momentum"
+AGENTS=200
+CAPITAL=10000
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --coin) COIN="$2"; shift 2 ;;
+        --days) DAYS="$2"; shift 2 ;;
+        --strategy) STRATEGY="$2"; shift 2 ;;
+        --agents) AGENTS="$2"; shift 2 ;;
+        --capital) CAPITAL="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+exec "$VENV" << PYEOF
+import sys, json, os, time, random, hashlib
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, os.path.join('$NEXUS_HOME', 'scripts'))
+
+import requests
+import numpy as np
+
+COIN = "$COIN"
+DAYS = $DAYS
+STRATEGY = "$STRATEGY"
+NUM_AGENTS = $AGENTS
+CAPITAL = $CAPITAL
+
+print(f"[trading-simulator] Fetching {DAYS}d price data for {COIN}...")
+
+# Fetch historical data from CoinGecko (free, no key needed)
+try:
+    resp = requests.get(
+        f"https://api.coingecko.com/api/v3/coins/{COIN}/market_chart",
+        params={"vs_currency": "usd", "days": DAYS, "interval": "daily"},
+        timeout=30
+    )
+    resp.raise_for_status()
+    prices = [p[1] for p in resp.json()["prices"]]
+except Exception as e:
+    print(f"[trading-simulator] CoinGecko fetch failed ({e}), using synthetic data")
+    # Generate synthetic price data as fallback
+    prices = [CAPITAL]
+    for _ in range(DAYS):
+        prices.append(prices[-1] * (1 + random.gauss(0.001, 0.03)))
+
+returns = np.diff(prices) / prices[:-1]
+
+print(f"[trading-simulator] Running {STRATEGY} strategy with {NUM_AGENTS} agents...")
+
+# Strategy implementations
+def momentum_signal(returns, lookback=5):
+    if len(returns) < lookback:
+        return 0
+    return 1 if np.mean(returns[-lookback:]) > 0 else -1
+
+def mean_reversion_signal(returns, lookback=10):
+    if len(returns) < lookback:
+        return 0
+    z = (returns[-1] - np.mean(returns[-lookback:])) / (np.std(returns[-lookback:]) + 1e-8)
+    return -1 if z > 1 else (1 if z < -1 else 0)
+
+def breakout_signal(prices_window, lookback=20):
+    if len(prices_window) < lookback:
+        return 0
+    high = max(prices_window[-lookback:])
+    low = min(prices_window[-lookback:])
+    current = prices_window[-1]
+    if current >= high * 0.98:
+        return 1
+    elif current <= low * 1.02:
+        return -1
+    return 0
+
+strategies = {
+    "momentum": momentum_signal,
+    "mean-reversion": mean_reversion_signal,
+    "breakout": lambda r, **kw: breakout_signal(prices[:len(r)+1])
+}
+
+signal_fn = strategies.get(STRATEGY, momentum_signal)
+
+# Simulate multiple agents with parameter variations
+agent_results = []
+for i in range(NUM_AGENTS):
+    portfolio = CAPITAL
+    position = 0  # 0 = cash, 1 = long, -1 = short
+    lookback = random.randint(3, 20)  # Each agent has slightly different params
+    trades = 0
+
+    for t in range(1, len(returns)):
+        signal = signal_fn(returns[:t], lookback=lookback)
+        if signal != position:
+            position = signal
+            trades += 1
+        if position != 0:
+            portfolio *= (1 + position * returns[t])
+
+    roi = (portfolio - CAPITAL) / CAPITAL
+    agent_results.append({
+        "roi": roi,
+        "final_portfolio": portfolio,
+        "trades": trades,
+        "lookback": lookback
+    })
+
+rois = [a["roi"] for a in agent_results]
+roi_mean = np.mean(rois)
+roi_std = np.std(rois)
+sharpe = roi_mean / (roi_std + 1e-8) * np.sqrt(252 / DAYS)
+win_rate = sum(1 for r in rois if r > 0) / len(rois)
+max_drawdown = min(rois)
+
+# Find best parameters
+best_agent = max(agent_results, key=lambda a: a["roi"])
+
+sim_id = hashlib.md5(f"{COIN}{STRATEGY}{time.time()}".encode()).hexdigest()[:12]
+
+result = {
+    "simulation_id": sim_id,
+    "strategy": STRATEGY,
+    "coin": COIN,
+    "days": DAYS,
+    "num_agents": NUM_AGENTS,
+    "roi_mean": round(roi_mean * 100, 2),
+    "roi_std": round(roi_std * 100, 2),
+    "sharpe_ratio": round(sharpe, 3),
+    "max_drawdown": round(max_drawdown * 100, 2),
+    "win_rate": round(win_rate * 100, 1),
+    "best_params": {"lookback": best_agent["lookback"], "roi": round(best_agent["roi"] * 100, 2)},
+    "timestamp": datetime.now(timezone.utc).isoformat()
+}
+
+# Store results in memory
+try:
+    from memory_system import MemorySystem
+    ms = MemorySystem('$NEXUS_HOME')
+    ms.store(
+        content=f"Trading simulation [{sim_id}]: {STRATEGY} on {COIN} ({DAYS}d) — "
+                f"ROI: {result['roi_mean']}% ± {result['roi_std']}%, "
+                f"Sharpe: {result['sharpe_ratio']}, Win rate: {result['win_rate']}%",
+        memory_type='strategic',
+        tags=['simulation', 'trading', STRATEGY, COIN],
+        source='trading-simulator',
+        importance=0.7
+    )
+except Exception as e:
+    print(f"[trading-simulator] Warning: Could not store to memory: {e}", file=sys.stderr)
+
+print(json.dumps(result, indent=2))
+PYEOF

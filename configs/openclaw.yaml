@@ -1,0 +1,148 @@
+# Nexus OpenClaw Configuration
+# Agent orchestration and skill registration
+
+orchestrator:
+  name: "nexus"
+  version: "1.0.0"
+  home: "${NEXUS_HOME}"
+
+  # LLM backend — "auto" uses the model router for intelligent tier selection
+  llm:
+    provider: "ollama"
+    model: "auto"
+    endpoint: "http://localhost:11434"
+    fallback_model: "qwen2.5:7b"
+
+  # Model routing configuration
+  model_routing:
+    enabled: true
+    classifier_model: "qwen2.5:0.5b"
+    tiers:
+      local_small: "qwen2.5:0.5b"
+      local_large: "qwen2.5:7b"
+      local_code: "qwen2.5-coder:7b"
+      cloud_economy: "claude-sonnet-4-20250514"
+      cloud_premium: "claude-opus-4-20250514"
+
+  # Memory integration
+  memory:
+    enabled: true
+    script: "${NEXUS_HOME}/scripts/memory_system.py"
+    auto_log: true  # Log all agent actions to memory
+    hybrid_search: true
+    decay_lambda: 0.05  # Memory half-life ~14 days
+    link_graph: true
+
+  # Sandbox security (NemoClaw)
+  sandbox:
+    enabled: true
+    plugin: "nemoclaw"
+    policies: "${NEXUS_HOME}/configs/sandbox/"
+
+  # Guardian settings
+  guardian:
+    enabled: true
+    require_approval:
+      - financial
+      - system-mod
+      - external-api
+      - create-agent
+    auto_approve:
+      - memory-read
+      - memory-write
+      - internal-query
+    cloud_verification:
+      enabled: true
+      provider: "anthropic"  # or "openai"
+      threshold: "high"  # Only verify high/critical risk actions
+
+# Agent registry
+agents:
+  strategist:
+    identity: "${NEXUS_HOME}/agents/strategist/IDENTITY.md"
+    auto_start: true
+    skills:
+      - search-memory
+      - store-memory
+      - ask-questions
+      - run-simulation
+      - trading-simulator
+      - lead-generator
+      - content-creator
+
+  guardian:
+    identity: "${NEXUS_HOME}/agents/guardian/IDENTITY.md"
+    auto_start: true
+    skills:
+      - search-memory
+      - store-memory
+      - guardian-review
+
+  worker:
+    identity: "${NEXUS_HOME}/agents/worker/IDENTITY.md"
+    auto_start: false  # Started on demand
+    skills:
+      - search-memory
+      - store-memory
+      - run-simulation
+      - trading-simulator
+      - lead-generator
+      - content-creator
+
+  evolution:
+    identity: "${NEXUS_HOME}/agents/evolution/IDENTITY.md"
+    auto_start: true
+    schedule: "*/30 * * * *"  # Run optimization loop every 30 minutes
+    skills:
+      - search-memory
+      - store-memory
+      - run-simulation
+
+# Skill registry
+skills:
+  search-memory:
+    path: "${NEXUS_HOME}/skills/search-memory"
+    description: "Search semantic memory"
+    risk: "low"
+
+  store-memory:
+    path: "${NEXUS_HOME}/skills/store-memory"
+    description: "Store new memory"
+    risk: "low"
+
+  ask-questions:
+    path: "${NEXUS_HOME}/skills/ask-questions"
+    description: "RAG-powered Q&A"
+    risk: "low"
+
+  create-agent:
+    path: "${NEXUS_HOME}/skills/create-agent"
+    description: "Create new agent"
+    risk: "medium"
+    requires_guardian: true
+
+  run-simulation:
+    path: "${NEXUS_HOME}/skills/run-simulation"
+    description: "Run MiroFish simulation"
+    risk: "low"
+
+  guardian-review:
+    path: "${NEXUS_HOME}/skills/guardian-review"
+    description: "Guardian triple-check review"
+    risk: "low"
+
+  trading-simulator:
+    path: "${NEXUS_HOME}/skills/trading-simulator"
+    description: "Crypto trading simulation"
+    risk: "low"
+
+  lead-generator:
+    path: "${NEXUS_HOME}/skills/lead-generator"
+    description: "Real estate lead generation"
+    risk: "medium"
+    requires_guardian: true
+
+  content-creator:
+    path: "${NEXUS_HOME}/skills/content-creator"
+    description: "AI content generation"
+    risk: "low"

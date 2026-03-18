@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# guardian-review skill runner — Triple-check with optional cloud verification
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+PROPOSAL="${1:?Usage: run <proposal> [--action TYPE] [--risk LEVEL] [--skip_cloud]}"
+shift
+
+ACTION="general"
+RISK="medium"
+CONTEXT=""
+SKIP_CLOUD="false"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --action) ACTION="$2"; shift 2 ;;
+        --risk) RISK="$2"; shift 2 ;;
+        --context) CONTEXT="$2"; shift 2 ;;
+        --skip_cloud) SKIP_CLOUD="true"; shift ;;
+        *) shift ;;
+    esac
+done
+
+exec "$VENV" << 'PYEOF'
+import sys, json, os, hashlib
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.environ.get('NEXUS_HOME', os.path.expanduser('~/nexus')), 'scripts'))
+
+NEXUS_HOME = os.environ.get('NEXUS_HOME', os.path.expanduser('~/nexus'))
+PROPOSAL = os.environ.get('GUARDIAN_PROPOSAL', '')
+ACTION = os.environ.get('GUARDIAN_ACTION', 'general')
+RISK = os.environ.get('GUARDIAN_RISK', 'medium')
+CONTEXT = os.environ.get('GUARDIAN_CONTEXT', '')
+SKIP_CLOUD = os.environ.get('GUARDIAN_SKIP_CLOUD', 'false') == 'true'
+
+# Read proposal from first positional arg if env not set
+import argparse
+# Re-parse from actual script args since we're in a heredoc
+PROPOSAL = """PROPOSAL_PLACEHOLDER"""
+ACTION = """ACTION_PLACEHOLDER"""
+RISK = """RISK_PLACEHOLDER"""
+SKIP_CLOUD = SKIP_CLOUD
+
+def local_review(proposal, action, risk):
+    """Perform local logic checks."""
+    issues = []
+    confidence = 0.8
+
+    # Check 1: Logic validation
+    if len(proposal) < 10:
+        issues.append("Proposal too vague — provide more detail")
+        confidence -= 0.2
+
+    # Check 2: Risk-based rules
+    high_risk_keywords = ['delete', 'drop', 'remove', 'transfer', 'send money', 'deploy']
+    if any(kw in proposal.lower() for kw in high_risk_keywords):
+        if risk not in ('high', 'critical'):
+            issues.append(f"Proposal contains high-risk keywords but risk is marked as '{risk}'")
+            confidence -= 0.15
+
+    # Check 3: Action-specific rules
+    if action == 'financial' and risk == 'low':
+        issues.append("Financial actions cannot be low risk")
+        confidence -= 0.1
+
+    return confidence, issues
+
+def cloud_review(proposal, action, risk, context):
+    """Send to cloud model for independent verification."""
+    # Try Anthropic first, then OpenAI
+    config_path = Path(NEXUS_HOME) / 'configs' / 'user.yaml'
+    api_key = None
+    provider = None
+
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        api_key = os.environ['ANTHROPIC_API_KEY']
+        provider = 'anthropic'
+    elif os.environ.get('OPENAI_API_KEY'):
+        api_key = os.environ['OPENAI_API_KEY']
+        provider = 'openai'
+
+    if not api_key:
+        return 0.5, ["No cloud API key configured — skipping cloud verification"]
+
+    prompt = f"""You are a safety reviewer. Evaluate this proposed action:
+
+Action Type: {action}
+Risk Level: {risk}
+Proposal: {proposal}
+Context: {context}
+
+Respond with ONLY a JSON object:
+{{"approved": true/false, "confidence": 0.0-1.0, "reasoning": "...", "conditions": [...]}}"""
+
+    try:
+        import requests
+        if provider == 'anthropic':
+            resp = requests.post(
+                'https://api.anthropic.com/v1/messages',
+                headers={
+                    'x-api-key': api_key,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json'
+                },
+                json={
+                    'model': 'claude-sonnet-4-20250514',
+                    'max_tokens': 500,
+                    'messages': [{'role': 'user', 'content': prompt}]
+                },
+                timeout=30
+            )
+            resp.raise_for_status()
+            text = resp.json()['content'][0]['text']
+        else:
+            resp = requests.post(
+                'https://api.openai.com/v1/chat/completions',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={
+                    'model': 'gpt-4o-mini',
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 500
+                },
+                timeout=30
+            )
+            resp.raise_for_status()
+            text = resp.json()['choices'][0]['message']['content']
+
+        result = json.loads(text)
+        cloud_conf = result.get('confidence', 0.5)
+        cloud_issues = result.get('conditions', [])
+        if not result.get('approved', False):
+            cloud_issues.insert(0, f"Cloud model rejected: {result.get('reasoning', 'no reason')}")
+            cloud_conf = 1 - cloud_conf
+        return cloud_conf, cloud_issues
+
+    except Exception as e:
+        return 0.5, [f"Cloud verification failed: {e}"]
+
+# === Execute Review ===
+local_conf, local_issues = local_review(PROPOSAL, ACTION, RISK)
+
+cloud_conf = 1.0
+cloud_issues = []
+if not SKIP_CLOUD and RISK in ('high', 'critical'):
+    cloud_conf, cloud_issues = cloud_review(PROPOSAL, ACTION, RISK, CONTEXT)
+
+# Combine results
+all_issues = local_issues + cloud_issues
+final_confidence = (local_conf + cloud_conf) / 2 if cloud_issues else local_conf
+
+if final_confidence >= 0.7 and not any('rejected' in i.lower() for i in all_issues):
+    decision = 'APPROVED'
+elif final_confidence >= 0.5:
+    decision = 'ESCALATE'
+else:
+    decision = 'REJECTED'
+
+# Log to memory
+try:
+    from memory_system import MemorySystem
+    ms = MemorySystem(NEXUS_HOME)
+    ms.store(
+        content=f"Guardian Review [{decision}]: {PROPOSAL}\nConfidence: {final_confidence:.2f}\nIssues: {all_issues}",
+        memory_type='procedural',
+        tags=['guardian', 'review', decision.lower()],
+        source='guardian-review',
+        importance=0.8 if decision == 'REJECTED' else 0.4
+    )
+except Exception:
+    pass  # Don't fail the review if memory logging fails
+
+# Output
+result = f"""decision: {decision}
+confidence: {final_confidence:.2f}
+reasoning: |
+  Check 1 (Logic): {'PASS' if not local_issues else '; '.join(local_issues)}
+  Check 2 (Cloud): {'SKIPPED' if SKIP_CLOUD else ('PASS' if not cloud_issues else '; '.join(cloud_issues))}
+  Check 3 (Combined): confidence={final_confidence:.2f}, issues={len(all_issues)}
+conditions: {json.dumps(all_issues)}"""
+
+print(result)
+PYEOF

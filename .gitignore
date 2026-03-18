@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+node_modules/
+.system/
+memory/.system/
+*.db
+optimization_log.jsonl

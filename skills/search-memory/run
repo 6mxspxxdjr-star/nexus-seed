@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# search-memory skill runner
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+QUERY="${1:?Usage: run <query> [--top_k N] [--type TYPE]}"
+shift
+
+exec "$VENV" -c "
+import sys, json
+sys.path.insert(0, '$NEXUS_HOME/scripts')
+from memory_system import MemorySystem
+
+ms = MemorySystem('$NEXUS_HOME')
+results = ms.search('$QUERY', $@)
+print(json.dumps(results, indent=2, default=str))
+" "$@"

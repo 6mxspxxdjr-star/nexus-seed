@@ -1,0 +1,40 @@
+# Nexus QMD Configuration
+# File-based indexing and query engine
+
+qmd:
+  version: "1.0"
+  index_path: "${NEXUS_HOME}/memory/.system/qmd_index"
+
+  # Directories to index
+  sources:
+    - path: "${NEXUS_HOME}/memory"
+      recursive: true
+      extensions: [".md", ".txt", ".json"]
+      exclude: [".system", "node_modules"]
+
+    - path: "${NEXUS_HOME}/agents"
+      recursive: true
+      extensions: [".md"]
+
+    - path: "${NEXUS_HOME}/skills"
+      recursive: true
+      extensions: [".md"]
+
+  # Indexing settings
+  indexer:
+    chunk_size: 512
+    chunk_overlap: 50
+    embedding_model: "nomic-embed-text"
+    embedding_endpoint: "http://localhost:11434"
+
+  # Query settings
+  query:
+    default_top_k: 10
+    rerank: true
+    highlight: true
+
+  # Auto-reindex schedule
+  schedule:
+    enabled: true
+    interval: "1h"  # Re-index every hour
+    on_file_change: true  # Also index on file modifications

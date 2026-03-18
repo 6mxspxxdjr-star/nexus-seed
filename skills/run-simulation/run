@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# run-simulation skill runner
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+AGENTS=100
+ROUNDS=50
+MARKET="crypto"
+STRATEGY=""
+PARAMS="{}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --agents) AGENTS="$2"; shift 2 ;;
+        --rounds) ROUNDS="$2"; shift 2 ;;
+        --market) MARKET="$2"; shift 2 ;;
+        --strategy) STRATEGY="$2"; shift 2 ;;
+        --params) PARAMS="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+exec "$VENV" "$NEXUS_HOME/scripts/run_simulation.py" \
+    --agents "$AGENTS" \
+    --rounds "$ROUNDS" \
+    --market "$MARKET" \
+    ${STRATEGY:+--strategy "$STRATEGY"} \
+    --params "$PARAMS"

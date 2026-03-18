@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# content-creator profit engine
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+TOPIC=""
+STYLE="informative"
+LENGTH="medium"
+PUBLISH="false"
+SCHEDULE=""
+SEO_KEYWORDS=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --topic) TOPIC="$2"; shift 2 ;;
+        --style) STYLE="$2"; shift 2 ;;
+        --length) LENGTH="$2"; shift 2 ;;
+        --publish) PUBLISH="true"; shift ;;
+        --schedule) SCHEDULE="$2"; shift 2 ;;
+        --seo_keywords) SEO_KEYWORDS="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+[[ -z "$TOPIC" ]] && echo "Error: --topic required" && exit 1
+
+exec "$VENV" << PYEOF
+import sys, json, os, re, hashlib
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, os.path.join('$NEXUS_HOME', 'scripts'))
+import requests
+
+NEXUS_HOME = '$NEXUS_HOME'
+TOPIC = """$TOPIC"""
+STYLE = '$STYLE'
+LENGTH = '$LENGTH'
+PUBLISH = '$PUBLISH' == 'true'
+SCHEDULE = '$SCHEDULE'
+SEO_KEYWORDS = [k.strip() for k in '$SEO_KEYWORDS'.split(',') if k.strip()]
+
+length_map = {"short": 500, "medium": 1000, "long": 2000}
+target_words = length_map.get(LENGTH, 1000)
+
+# Build prompt
+seo_section = ""
+if SEO_KEYWORDS:
+    seo_section = f"\nNaturally incorporate these SEO keywords: {', '.join(SEO_KEYWORDS)}"
+
+prompt = f"""Write a {STYLE} blog post about: {TOPIC}
+
+Target length: approximately {target_words} words.
+Format: Markdown with proper headings (##), paragraphs, and formatting.{seo_section}
+
+Requirements:
+- Engaging introduction that hooks the reader
+- Well-structured body with clear sections
+- Actionable conclusion with a call-to-action
+- Professional tone, no fluff
+- Include relevant examples or data points
+
+Output ONLY the blog post content in Markdown format, starting with the title as an H1."""
+
+print(f"[content-creator] Generating {LENGTH} {STYLE} post about: {TOPIC}")
+
+try:
+    resp = requests.post(
+        "http://localhost:11434/api/generate",
+        json={"model": "qwen2.5:14b", "prompt": prompt, "stream": False},
+        timeout=300
+    )
+    resp.raise_for_status()
+    content = resp.json().get("response", "")
+except Exception as e:
+    print(f"[content-creator] LLM generation failed: {e}")
+    sys.exit(1)
+
+# Extract title
+title_match = re.match(r'^#\s+(.+)', content)
+title = title_match.group(1) if title_match else TOPIC
+word_count = len(content.split())
+
+# Simple SEO score
+seo_score = 50
+if SEO_KEYWORDS:
+    content_lower = content.lower()
+    found = sum(1 for kw in SEO_KEYWORDS if kw.lower() in content_lower)
+    seo_score = min(100, 50 + (found / len(SEO_KEYWORDS)) * 50)
+
+# Save content to file
+content_dir = Path(NEXUS_HOME) / 'memory' / '03_Content'
+content_dir.mkdir(parents=True, exist_ok=True)
+slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
+filepath = content_dir / f"{datetime.now().strftime('%Y%m%d')}_{slug}.md"
+with open(filepath, 'w') as f:
+    f.write(content)
+
+result = {
+    "title": title,
+    "word_count": word_count,
+    "style": STYLE,
+    "seo_score": seo_score,
+    "file_path": str(filepath),
+    "published": False,
+    "url": None,
+    "timestamp": datetime.now(timezone.utc).isoformat()
+}
+
+# Publish to WordPress if requested
+if PUBLISH:
+    import yaml
+    keys_path = Path(NEXUS_HOME) / 'configs' / 'api_keys.yaml'
+    keys = {}
+    if keys_path.exists():
+        with open(keys_path) as f:
+            keys = yaml.safe_load(f) or {}
+
+    if 'wordpress_url' not in keys:
+        print("\nWordPress credentials required for publishing.")
+        wp_url = input("WordPress site URL (e.g., https://myblog.com): ").strip()
+        wp_user = input("WordPress username: ").strip()
+        wp_pass = input("WordPress application password: ").strip()
+        if wp_url and wp_user and wp_pass:
+            keys['wordpress_url'] = wp_url
+            keys['wordpress_user'] = wp_user
+            keys['wordpress_pass'] = wp_pass
+            with open(keys_path, 'w') as f:
+                yaml.dump(keys, f)
+            os.chmod(str(keys_path), 0o600)
+
+    if 'wordpress_url' in keys:
+        try:
+            import base64
+            auth = base64.b64encode(f"{keys['wordpress_user']}:{keys['wordpress_pass']}".encode()).decode()
+            post_data = {
+                "title": title,
+                "content": content,
+                "status": "draft" if SCHEDULE else "publish"
+            }
+            if SCHEDULE:
+                post_data["date"] = SCHEDULE
+
+            wp_resp = requests.post(
+                f"{keys['wordpress_url']}/wp-json/wp/v2/posts",
+                headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"},
+                json=post_data,
+                timeout=30
+            )
+            wp_resp.raise_for_status()
+            wp_data = wp_resp.json()
+            result["published"] = True
+            result["url"] = wp_data.get("link", "")
+            print(f"[content-creator] Published: {result['url']}")
+        except Exception as e:
+            print(f"[content-creator] Publishing failed: {e}")
+
+# Store in memory
+try:
+    from memory_system import MemorySystem
+    ms = MemorySystem(NEXUS_HOME)
+    ms.store(
+        content=f"Generated content: '{title}' ({word_count} words, {STYLE}). "
+                f"Published: {result['published']}",
+        memory_type='procedural',
+        tags=['content', STYLE, slug],
+        source='content-creator',
+        importance=0.4
+    )
+except Exception:
+    pass
+
+print(json.dumps(result, indent=2))
+PYEOF

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# store-memory skill runner
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+CONTENT="${1:?Usage: run <content> [--type TYPE] [--tags TAGS] [--source SOURCE] [--importance N]}"
+shift
+
+TYPE="semantic"
+TAGS=""
+SOURCE="manual"
+IMPORTANCE="0.5"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --type) TYPE="$2"; shift 2 ;;
+        --tags) TAGS="$2"; shift 2 ;;
+        --source) SOURCE="$2"; shift 2 ;;
+        --importance) IMPORTANCE="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+exec "$VENV" -c "
+import sys, json
+sys.path.insert(0, '$NEXUS_HOME/scripts')
+from memory_system import MemorySystem
+
+ms = MemorySystem('$NEXUS_HOME')
+result = ms.store(
+    content='''$CONTENT''',
+    memory_type='$TYPE',
+    tags='$TAGS'.split(',') if '$TAGS' else [],
+    source='$SOURCE',
+    importance=$IMPORTANCE
+)
+print(json.dumps(result, indent=2, default=str))
+"

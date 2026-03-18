@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# lead-generator profit engine
+set -euo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/nexus}"
+VENV="$NEXUS_HOME/.venv/bin/python"
+
+LOCATION=""
+PROPERTY_TYPE="single-family"
+MAX_RESULTS=50
+SKIP_TRACE="true"
+FILTERS="{}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --location) LOCATION="$2"; shift 2 ;;
+        --property_type) PROPERTY_TYPE="$2"; shift 2 ;;
+        --max_results) MAX_RESULTS="$2"; shift 2 ;;
+        --skip_trace) SKIP_TRACE="$2"; shift 2 ;;
+        --filters) FILTERS="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+[[ -z "$LOCATION" ]] && echo "Error: --location required" && exit 1
+
+exec "$VENV" << PYEOF
+import sys, json, os, yaml
+from pathlib import Path
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.join('$NEXUS_HOME', 'scripts'))
+
+NEXUS_HOME = '$NEXUS_HOME'
+LOCATION = '$LOCATION'
+PROPERTY_TYPE = '$PROPERTY_TYPE'
+MAX_RESULTS = $MAX_RESULTS
+SKIP_TRACE = '$SKIP_TRACE' == 'true'
+FILTERS = json.loads('$FILTERS')
+
+# Load or prompt for API keys
+keys_path = Path(NEXUS_HOME) / 'configs' / 'api_keys.yaml'
+
+def load_keys():
+    if keys_path.exists():
+        with open(keys_path) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+def save_keys(keys):
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(keys_path, 'w') as f:
+        yaml.dump(keys, f)
+    os.chmod(str(keys_path), 0o600)
+
+keys = load_keys()
+
+if 'apify_token' not in keys:
+    print("=" * 60)
+    print("APIFY API KEY REQUIRED")
+    print("Sign up at https://apify.com and get your API token.")
+    print("Free tier includes \$5/month of compute.")
+    print("=" * 60)
+    token = input("Enter Apify API token: ").strip()
+    if not token:
+        print("Error: Apify token required for lead generation")
+        sys.exit(1)
+    keys['apify_token'] = token
+    save_keys(keys)
+
+if SKIP_TRACE and 'reiskip_key' not in keys:
+    print("=" * 60)
+    print("REISKIP API KEY REQUIRED (for skip-tracing)")
+    print("Sign up at https://reiskip.com for skip-trace access.")
+    print("Cost: ~\$0.15 per record")
+    print("=" * 60)
+    key = input("Enter REISkip API key (or press Enter to skip): ").strip()
+    if key:
+        keys['reiskip_key'] = key
+        save_keys(keys)
+    else:
+        SKIP_TRACE = False
+        print("Proceeding without skip-tracing.")
+
+import requests
+
+# Step 1: Scrape property data via Apify Zillow actor
+print(f"\n[lead-gen] Searching {LOCATION} for {PROPERTY_TYPE} properties...")
+
+try:
+    # Start Apify actor run
+    actor_input = {
+        "searchType": "sale",
+        "location": LOCATION,
+        "propertyType": PROPERTY_TYPE.replace("-", " "),
+        "maxItems": MAX_RESULTS,
+    }
+    if 'min_equity_pct' in FILTERS:
+        actor_input['minEquity'] = FILTERS['min_equity_pct']
+    if 'max_price' in FILTERS:
+        actor_input['maxPrice'] = FILTERS['max_price']
+
+    resp = requests.post(
+        "https://api.apify.com/v2/acts/petr_cermak~zillow-api-scraper/runs",
+        params={"token": keys['apify_token']},
+        json=actor_input,
+        timeout=30
+    )
+    resp.raise_for_status()
+    run_id = resp.json()['data']['id']
+
+    # Poll for results (max 5 minutes)
+    import time
+    print(f"[lead-gen] Apify run started ({run_id}), waiting for results...")
+    for _ in range(30):
+        time.sleep(10)
+        status_resp = requests.get(
+            f"https://api.apify.com/v2/actor-runs/{run_id}",
+            params={"token": keys['apify_token']},
+            timeout=15
+        )
+        status = status_resp.json()['data']['status']
+        if status == 'SUCCEEDED':
+            break
+        elif status in ('FAILED', 'ABORTED'):
+            print(f"[lead-gen] Apify run failed: {status}")
+            sys.exit(1)
+
+    # Fetch results
+    dataset_id = status_resp.json()['data']['defaultDatasetId']
+    data_resp = requests.get(
+        f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+        params={"token": keys['apify_token'], "limit": MAX_RESULTS},
+        timeout=30
+    )
+    properties = data_resp.json()
+
+except Exception as e:
+    print(f"[lead-gen] Apify scraping failed: {e}")
+    print("[lead-gen] Using demo data for illustration")
+    properties = [
+        {"address": f"123 Demo St #{i}", "city": LOCATION, "price": 250000 + i * 10000,
+         "bedrooms": 3, "bathrooms": 2, "sqft": 1500}
+        for i in range(min(5, MAX_RESULTS))
+    ]
+
+print(f"[lead-gen] Found {len(properties)} properties")
+
+# Step 2: Skip-trace if enabled
+leads = []
+skip_traced = 0
+
+for prop in properties:
+    lead = {
+        "address": prop.get("address", "Unknown"),
+        "city": prop.get("city", LOCATION),
+        "price": prop.get("price", 0),
+        "bedrooms": prop.get("bedrooms", 0),
+        "bathrooms": prop.get("bathrooms", 0),
+        "sqft": prop.get("sqft", 0),
+    }
+
+    if SKIP_TRACE and 'reiskip_key' in keys:
+        try:
+            skip_resp = requests.post(
+                "https://api.reiskip.com/v1/skip-trace",
+                headers={"Authorization": f"Bearer {keys['reiskip_key']}"},
+                json={"address": lead["address"], "city": lead["city"]},
+                timeout=15
+            )
+            if skip_resp.ok:
+                skip_data = skip_resp.json()
+                lead["owner_name"] = skip_data.get("name", "")
+                lead["phone"] = skip_data.get("phone", "")
+                lead["email"] = skip_data.get("email", "")
+                skip_traced += 1
+        except Exception:
+            pass
+
+    leads.append(lead)
+
+# Calculate cost estimate
+cost = len(properties) * 0.01  # Apify compute estimate
+if SKIP_TRACE:
+    cost += skip_traced * 0.15
+
+result = {
+    "location": LOCATION,
+    "property_type": PROPERTY_TYPE,
+    "total_found": len(leads),
+    "skip_traced_count": skip_traced,
+    "cost_estimate_usd": round(cost, 2),
+    "leads": leads[:10],  # Show first 10 in output
+    "full_results_path": f"{NEXUS_HOME}/memory/leads/{LOCATION.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
+    "timestamp": datetime.now(timezone.utc).isoformat()
+}
+
+# Save full results to file
+leads_dir = Path(NEXUS_HOME) / 'memory' / 'leads'
+leads_dir.mkdir(parents=True, exist_ok=True)
+full_path = Path(result['full_results_path'])
+with open(full_path, 'w') as f:
+    json.dump({"leads": leads, "metadata": {k: v for k, v in result.items() if k != "leads"}}, f, indent=2)
+
+# Store summary in memory
+try:
+    from memory_system import MemorySystem
+    ms = MemorySystem(NEXUS_HOME)
+    ms.store(
+        content=f"Lead generation: {len(leads)} {PROPERTY_TYPE} leads in {LOCATION}. "
+                f"Skip-traced: {skip_traced}. Cost: \${cost:.2f}",
+        memory_type='strategic',
+        tags=['leads', 'real-estate', LOCATION.replace(' ', '-').lower()],
+        source='lead-generator',
+        importance=0.6
+    )
+except Exception:
+    pass
+
+print(json.dumps(result, indent=2, default=str))
+PYEOF
