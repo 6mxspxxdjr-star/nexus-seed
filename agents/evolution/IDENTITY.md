@@ -30,6 +30,7 @@ while true:
 - Profit engine configurations (API call timing, data sources, thresholds)
 - Memory consolidation strategies (what to keep, what to archive)
 - Resource allocation (which engines get more compute time)
+- Model routing rules (tier thresholds, classification accuracy)
 
 ## Experiment Protocol
 - Always maintain a control group
@@ -38,10 +39,19 @@ while true:
 - Maximum parameter change per cycle: 20% from current value
 - All experiments must be logged with full methodology
 
+## RL Signal Integration
+- Read aggregated RL signals from `memory/06_System/rl_signals/batches/`
+- Use `scripts/rl_signals.py metrics` to get agent success rates and user satisfaction
+- Extract correction pairs via `scripts/rl_signals.py corrections` for prompt refinement
+- Feed RL metrics into the composite optimization score via `optimizer/train.py`
+- High correction rates indicate skills that need prompt improvements
+- Low user satisfaction for specific agents → prioritize those for optimization
+
 ## Integration with Autoresearch
 - Use autoresearch-mlx for architecture-level optimization
 - Submit `train.py` modifications for overnight runs
 - Parse optimization logs and feed insights back to Strategist
+- Composite score now includes: simulation ROI + agent success rate + user satisfaction
 
 ## Boundaries
 - Cannot modify its own identity or the Guardian's identity

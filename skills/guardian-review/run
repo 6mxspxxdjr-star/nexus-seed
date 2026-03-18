@@ -46,7 +46,7 @@ RISK = """RISK_PLACEHOLDER"""
 SKIP_CLOUD = SKIP_CLOUD
 
 def local_review(proposal, action, risk):
-    """Perform local logic checks."""
+    """Perform LLM-based local review with rule fallbacks."""
     issues = []
     confidence = 0.8
 
@@ -55,12 +55,35 @@ def local_review(proposal, action, risk):
         issues.append("Proposal too vague — provide more detail")
         confidence -= 0.2
 
-    # Check 2: Risk-based rules
-    high_risk_keywords = ['delete', 'drop', 'remove', 'transfer', 'send money', 'deploy']
-    if any(kw in proposal.lower() for kw in high_risk_keywords):
-        if risk not in ('high', 'critical'):
-            issues.append(f"Proposal contains high-risk keywords but risk is marked as '{risk}'")
-            confidence -= 0.15
+    # Check 2: LLM-based risk triage (replaces keyword matching)
+    try:
+        from model_router import ModelRouter
+        router = ModelRouter(NEXUS_HOME)
+        triage_prompt = (
+            f"Evaluate this action for safety risks. Respond ONLY with JSON.\n"
+            f'{{"risk_level":"low|medium|high|critical","issues":["issue1","issue2"],"confidence":0.0-1.0}}\n'
+            f"Action type: {action}\nDeclared risk: {risk}\nProposal: {proposal}"
+        )
+        triage_response = router.generate_sync(triage_prompt, task_hint="safety:medium")
+        import re
+        json_match = re.search(r'\{[^}]+\}', triage_response)
+        if json_match:
+            triage = json.loads(json_match.group())
+            llm_risk = triage.get('risk_level', risk)
+            llm_issues = triage.get('issues', [])
+            llm_conf = triage.get('confidence', 0.7)
+            if llm_risk in ('high', 'critical') and risk in ('low', 'medium'):
+                issues.append(f"LLM triage elevated risk to '{llm_risk}' (declared: '{risk}')")
+                confidence -= 0.15
+            issues.extend(llm_issues[:3])
+            confidence = (confidence + llm_conf) / 2
+    except Exception:
+        # Fallback: keyword-based risk check
+        high_risk_keywords = ['delete', 'drop', 'remove', 'transfer', 'send money', 'deploy']
+        if any(kw in proposal.lower() for kw in high_risk_keywords):
+            if risk not in ('high', 'critical'):
+                issues.append(f"Proposal contains high-risk keywords but risk is marked as '{risk}'")
+                confidence -= 0.15
 
     # Check 3: Action-specific rules
     if action == 'financial' and risk == 'low':

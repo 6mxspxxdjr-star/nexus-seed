@@ -1,0 +1,20 @@
+# NemoClaw Network Policy
+# Defines which endpoints agents can reach
+
+allowed_endpoints:
+  - host: "localhost"
+    port: 11434
+    protocol: "http"    # Ollama
+  - host: "127.0.0.1"
+    port: 11434
+    protocol: "http"
+  - host: "api.anthropic.com"
+    port: 443
+    protocol: "https"   # Claude API
+  - host: "api.openai.com"
+    port: 443
+    protocol: "https"   # OpenAI API (if configured)
+
+blocked_ranges: []
+
+allow_localhost: true

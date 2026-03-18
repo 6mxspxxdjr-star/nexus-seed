@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 exec "$VENV" << PYEOF
-import sys, json, requests
+import sys, json
 sys.path.insert(0, '$NEXUS_HOME/scripts')
 from memory_system import MemorySystem
 
@@ -44,20 +44,29 @@ $QUESTION
 
 ## Answer"""
 
-# Query Ollama
-response = requests.post(
-    "http://localhost:11434/api/generate",
-    json={"model": "$MODEL", "prompt": prompt, "stream": False},
-    timeout=120
-)
-response.raise_for_status()
-data = response.json()
+# Use model router for intelligent model selection
+try:
+    from model_router import ModelRouter
+    router = ModelRouter('$NEXUS_HOME')
+    answer = router.generate_sync(prompt, task_hint="simple_qa")
+    routed_model = router.route('$QUESTION', task_hint="simple_qa").model
+except Exception:
+    # Fallback to direct Ollama
+    import requests
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={"model": "$MODEL", "prompt": prompt, "stream": False},
+        timeout=120
+    )
+    response.raise_for_status()
+    data = response.json()
+    answer = data.get("response", "")
+    routed_model = "$MODEL"
 
 result = {
-    "answer": data.get("response", ""),
+    "answer": answer,
     "sources": [r["id"] for r in context_results],
-    "model": "$MODEL",
-    "tokens_used": data.get("eval_count", 0)
+    "model": routed_model,
 }
 print(json.dumps(result, indent=2))
 PYEOF

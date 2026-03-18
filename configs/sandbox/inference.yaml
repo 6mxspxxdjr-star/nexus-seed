@@ -1,0 +1,19 @@
+# NemoClaw Inference Policy
+# All LLM calls must go through approved backends via model_router.py
+
+approved_backends:
+  - provider: "ollama"
+    endpoint: "http://localhost:11434"
+    models:
+      - "qwen2.5:0.5b"
+      - "qwen2.5:7b"
+      - "qwen2.5-coder:7b"
+  - provider: "anthropic"
+    endpoint: "https://api.anthropic.com"
+    # No model restriction — router handles tier selection
+  - provider: "openai"
+    endpoint: "https://api.openai.com"
+
+require_router: true
+max_tokens_per_request: 8192
+rate_limit_rpm: 60

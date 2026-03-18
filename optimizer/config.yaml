@@ -12,6 +12,7 @@ autoresearch:
 
   # Search space — autoresearch modifies PARAMS in train.py within these bounds
   search_space:
+    # === Simulation parameters ===
     num_agents:
       type: "int"
       min: 50
@@ -61,6 +62,54 @@ autoresearch:
     position_sizing:
       type: "categorical"
       values: ["equal", "kelly", "risk_parity"]
+
+    # === Model routing parameters ===
+    routing_confidence_threshold:
+      type: "float"
+      min: 0.3
+      max: 0.9
+      step: 0.1
+      description: "Minimum classification confidence before falling back to heuristic"
+
+    routing_cloud_escalation_threshold:
+      type: "categorical"
+      values: ["medium", "high", "critical"]
+      description: "Minimum complexity to escalate to cloud models"
+
+    # === Memory system parameters ===
+    memory_decay_lambda:
+      type: "float"
+      min: 0.01
+      max: 0.15
+      step: 0.01
+      description: "Time decay rate for memory activation (higher = faster decay)"
+
+    memory_search_top_k:
+      type: "int"
+      min: 3
+      max: 20
+      description: "Number of memories to retrieve for RAG"
+
+    memory_rrf_k:
+      type: "int"
+      min: 20
+      max: 100
+      step: 10
+      description: "RRF fusion constant (higher = more conservative fusion)"
+
+    # === RL judge parameters ===
+    rl_reward_threshold:
+      type: "float"
+      min: 0.3
+      max: 0.8
+      step: 0.1
+      description: "Minimum reward to consider an action successful"
+
+    rl_signal_window_days:
+      type: "int"
+      min: 1
+      max: 14
+      description: "Days of RL signals to include in optimization"
 
   # Schedule
   schedule:

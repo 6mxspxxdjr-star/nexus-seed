@@ -1,0 +1,21 @@
+# NemoClaw Filesystem Policy
+# Defines which paths agents can access
+
+allowed_paths:
+  - "${NEXUS_HOME}/memory"
+  - "${NEXUS_HOME}/configs"
+  - "${NEXUS_HOME}/optimizer"
+  - "/tmp"
+
+read_only_paths:
+  - "${NEXUS_HOME}/agents"
+  - "${NEXUS_HOME}/skills"
+  - "${NEXUS_HOME}/scripts"
+
+denied_paths:
+  - "/etc/shadow"
+  - "/etc/passwd"
+  - "~/.ssh"
+  - "~/.gnupg"
+  - "~/.aws/credentials"
+  - "~/.config/gcloud"

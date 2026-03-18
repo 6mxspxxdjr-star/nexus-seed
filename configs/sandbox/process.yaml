@@ -1,0 +1,17 @@
+# NemoClaw Process Policy
+# Defines syscall and resource limits for agent execution
+
+max_concurrent_agents: 5
+max_execution_seconds: 1800   # 30 minutes per task
+max_memory_mb: 2048           # 2GB per agent
+
+denied_syscalls:
+  - ptrace
+  - mount
+  - umount
+  - reboot
+  - swapon
+  - kexec_load
+  - init_module
+
+allow_privilege_escalation: false

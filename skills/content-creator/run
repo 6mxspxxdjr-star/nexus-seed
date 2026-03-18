@@ -67,16 +67,23 @@ Output ONLY the blog post content in Markdown format, starting with the title as
 print(f"[content-creator] Generating {LENGTH} {STYLE} post about: {TOPIC}")
 
 try:
-    resp = requests.post(
-        "http://localhost:11434/api/generate",
-        json={"model": "qwen2.5:14b", "prompt": prompt, "stream": False},
-        timeout=300
-    )
-    resp.raise_for_status()
-    content = resp.json().get("response", "")
-except Exception as e:
-    print(f"[content-creator] LLM generation failed: {e}")
-    sys.exit(1)
+    from model_router import ModelRouter
+    router = ModelRouter(NEXUS_HOME)
+    content = router.generate_sync(prompt, task_hint="content_gen")
+except Exception:
+    # Fallback to direct Ollama
+    try:
+        import requests
+        resp = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "qwen2.5:7b", "prompt": prompt, "stream": False},
+            timeout=300
+        )
+        resp.raise_for_status()
+        content = resp.json().get("response", "")
+    except Exception as e:
+        print(f"[content-creator] LLM generation failed: {e}")
+        sys.exit(1)
 
 # Extract title
 title_match = re.match(r'^#\s+(.+)', content)

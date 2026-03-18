@@ -622,6 +622,17 @@ def ollama_generate(prompt_text, cfg, model_override=None):
         yield f"\n[Error: {e}]"
 
 
+def _init_router():
+    """Initialize the model router (lazy, best-effort)."""
+    try:
+        nexus_home = os.environ.get("NEXUS_HOME", str(Path.home() / "nexus"))
+        sys.path.insert(0, str(Path(nexus_home) / "scripts"))
+        from model_router import ModelRouter
+        return ModelRouter(nexus_home)
+    except Exception:
+        return None
+
+
 def chat_loop(term, cfg):
     """Interactive chat with Nexus."""
     rst = term.reset()
@@ -632,18 +643,29 @@ def chat_loop(term, cfg):
     ollama_url = chat_cfg["ollama_url"]
     has_ollama = ollama_available(ollama_url)
 
-    # Auto-detect the best available model
+    # Try to use the model router for intelligent routing
+    router = _init_router()
+    use_router = router is not None
+
+    # Auto-detect the best available model (fallback if no router)
     model = None
     if has_ollama:
         model = ollama_pick_model(ollama_url, chat_cfg["model"])
         if model:
-            sys.stdout.write(
-                term.fg(*dim_c) + f"  [{model}]" + rst + "\n"
-            )
+            if use_router:
+                sys.stdout.write(
+                    term.fg(*dim_c) + "  [router active \u2014 auto-routing enabled]" + rst + "\n"
+                )
+            else:
+                sys.stdout.write(
+                    term.fg(*dim_c) + f"  [{model}]" + rst + "\n"
+                )
         else:
             has_ollama = False
 
-    if not has_ollama:
+    has_backend = has_ollama or (use_router and router.get_available_models().get("anthropic"))
+
+    if not has_backend:
         sys.stdout.write(
             "\n"
             + term.fg(*dim_c)
@@ -675,8 +697,29 @@ def chat_loop(term, cfg):
         sys.stdout.write(term.fg(*cfg["colors"]["cool"]) + "  \u25c2 " + rst)
         sys.stdout.flush()
 
-        if has_ollama:
-            # Build context from recent history
+        if use_router and has_backend:
+            # Use router for intelligent model selection
+            decision = router.route(user_input)
+            sys.stdout.write(
+                term.fg(*dim_c) + f"[routed \u2192 {decision.model}] " + rst
+            )
+            sys.stdout.flush()
+
+            context = "\n".join(f"User: {h}" for h in history[-5:])
+            full_prompt = f"{context}\nUser: {user_input}\nNexus:"
+
+            for token in router.generate(
+                full_prompt,
+                task=user_input,
+                system_prompt=chat_cfg.get("system_prompt"),
+            ):
+                sys.stdout.write(term.fg(*user_c) + token + rst)
+                sys.stdout.flush()
+                time.sleep(chat_cfg["typewriter_delay"])
+            sys.stdout.write("\n")
+
+        elif has_ollama:
+            # Fallback: direct Ollama without router
             context = "\n".join(f"User: {h}" for h in history[-5:])
             full_prompt = f"{context}\nUser: {user_input}\nNexus:"
 

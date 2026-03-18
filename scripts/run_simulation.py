@@ -221,7 +221,7 @@ def run_mirofish_simulation(num_agents, num_rounds, market, params):
         "num_agents": num_agents,
         "num_rounds": num_rounds,
         "market_type": market,
-        "ollama_model": params.get("model", "qwen2.5:14b"),
+        "ollama_model": params.get("model", "auto"),
         "neo4j_uri": "bolt://localhost:7687",
         "neo4j_user": "neo4j",
         "neo4j_password": "nexus_password",

@@ -881,6 +881,89 @@ SYSTEMD_TMR_EOF
 fi
 
 # ============================================================================
+# EVOLUTION AGENT SCHEDULER (Autoresearch overnight)
+# ============================================================================
+step "Setting Up Evolution Agent Schedule"
+
+if [[ "$OS" == "macos" ]]; then
+    EVOL_PLIST="$HOME/Library/LaunchAgents/com.nexus.evolution.plist"
+    if [[ ! -f "$EVOL_PLIST" ]]; then
+        cat > "$EVOL_PLIST" << EVOL_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nexus.evolution</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NEXUS_HOME}/.venv/bin/python</string>
+        <string>${NEXUS_HOME}/optimizer/train.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>1</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${NEXUS_HOME}/optimizer/evolution.log</string>
+    <key>StandardErrorPath</key>
+    <string>${NEXUS_HOME}/optimizer/evolution.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NEXUS_HOME</key>
+        <string>${NEXUS_HOME}</string>
+    </dict>
+</dict>
+</plist>
+EVOL_PLIST_EOF
+        launchctl load "$EVOL_PLIST" 2>/dev/null || true
+        ok "Evolution agent scheduled (launchd, 1:00 AM)"
+    else
+        ok "Evolution schedule already exists"
+    fi
+
+elif [[ "$OS" == "linux" ]]; then
+    if command_exists systemctl; then
+        TIMER_DIR="$HOME/.config/systemd/user"
+        mkdir -p "$TIMER_DIR"
+
+        cat > "$TIMER_DIR/nexus-evolution.service" << EVOL_SVC_EOF
+[Unit]
+Description=Nexus Evolution Agent (Autoresearch)
+
+[Service]
+Type=oneshot
+ExecStart=${NEXUS_HOME}/.venv/bin/python ${NEXUS_HOME}/optimizer/train.py
+Environment=NEXUS_HOME=${NEXUS_HOME}
+EVOL_SVC_EOF
+
+        cat > "$TIMER_DIR/nexus-evolution.timer" << EVOL_TMR_EOF
+[Unit]
+Description=Nexus Evolution Agent Timer
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EVOL_TMR_EOF
+
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable nexus-evolution.timer 2>/dev/null || true
+        systemctl --user start nexus-evolution.timer 2>/dev/null || true
+        ok "Evolution agent scheduled (systemd timer, 1:00 AM)"
+    else
+        EVOL_CRON="0 1 * * * NEXUS_HOME=$NEXUS_HOME $NEXUS_HOME/.venv/bin/python $NEXUS_HOME/optimizer/train.py >> $NEXUS_HOME/optimizer/evolution.log 2>&1"
+        (crontab -l 2>/dev/null | grep -v "nexus.*evolution"; echo "$EVOL_CRON") | crontab -
+        ok "Evolution agent scheduled (cron, 1:00 AM)"
+    fi
+fi
+
+# ============================================================================
 # CREATE OBSIDIAN VAULT MARKER
 # ============================================================================
 step "Configuring Obsidian Integration"
