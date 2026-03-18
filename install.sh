@@ -380,6 +380,10 @@ if [[ "$FROM_REPO" == true ]]; then
     cp "$SCRIPT_DIR/scripts/memory_system.py" "$NEXUS_HOME/scripts/"
     cp "$SCRIPT_DIR/scripts/run_simulation.py" "$NEXUS_HOME/scripts/"
     cp "$SCRIPT_DIR/scripts/nightly_consolidation.py" "$NEXUS_HOME/scripts/"
+    cp "$SCRIPT_DIR/scripts/model_router.py" "$NEXUS_HOME/scripts/"
+    cp "$SCRIPT_DIR/scripts/rl_signals.py" "$NEXUS_HOME/scripts/"
+    cp "$SCRIPT_DIR/scripts/setup_keys.py" "$NEXUS_HOME/scripts/"
+    cp "$SCRIPT_DIR/scripts/update.py" "$NEXUS_HOME/scripts/"
     cp "$SCRIPT_DIR/scripts/first-boot.sh" "$NEXUS_HOME/scripts/"
     cp "$SCRIPT_DIR/scripts/test.sh" "$NEXUS_HOME/scripts/"
     chmod +x "$NEXUS_HOME/scripts/"*.sh

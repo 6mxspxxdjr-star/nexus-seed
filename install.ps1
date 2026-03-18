@@ -237,7 +237,7 @@ if ($FromRepo) {
     Log "Copying files from repository..."
 
     # Scripts
-    foreach ($f in @("memory_system.py", "run_simulation.py", "nightly_consolidation.py", "model_router.py", "rl_signals.py", "first-boot.sh", "test.sh")) {
+    foreach ($f in @("memory_system.py", "run_simulation.py", "nightly_consolidation.py", "model_router.py", "rl_signals.py", "setup_keys.py", "update.py", "first-boot.sh", "test.sh")) {
         $src = "$ScriptDir\scripts\$f"
         if (Test-Path $src) { Copy-Item $src "$NexusHome\scripts\" -Force }
     }
@@ -268,6 +268,7 @@ if ($FromRepo) {
     # UI & launcher
     if (Test-Path "$ScriptDir\nexus_ui.py") { Copy-Item "$ScriptDir\nexus_ui.py" "$NexusHome\" -Force }
     if (Test-Path "$ScriptDir\launch.bat") { Copy-Item "$ScriptDir\launch.bat" "$NexusHome\" -Force }
+    if (Test-Path "$ScriptDir\update.bat") { Copy-Item "$ScriptDir\update.bat" "$NexusHome\" -Force }
     if (Test-Path "$ScriptDir\nexus.ico") { Copy-Item "$ScriptDir\nexus.ico" "$NexusHome\" -Force }
     if (Test-Path "$ScriptDir\README.md") { Copy-Item "$ScriptDir\README.md" "$NexusHome\" -Force }
 

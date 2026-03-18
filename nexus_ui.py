@@ -633,6 +633,40 @@ def _init_router():
         return None
 
 
+def _run_key_setup():
+    """Run the API key setup wizard, injecting keys into environment."""
+    try:
+        nexus_home = os.environ.get("NEXUS_HOME", str(Path.home() / "nexus"))
+        sys.path.insert(0, str(Path(nexus_home) / "scripts"))
+        from setup_keys import interactive_setup, inject_keys
+        interactive_setup()
+        inject_keys()
+    except Exception as e:
+        print(f"  [key setup error: {e}]")
+
+def _run_updater():
+    """Run the Nexus updater."""
+    try:
+        nexus_home = os.environ.get("NEXUS_HOME", str(Path.home() / "nexus"))
+        sys.path.insert(0, str(Path(nexus_home) / "scripts"))
+        from update import update
+        update()
+    except Exception as e:
+        print(f"  [update error: {e}]")
+
+def _check_first_run():
+    """On first launch, prompt for API key setup if no keys configured."""
+    try:
+        nexus_home = os.environ.get("NEXUS_HOME", str(Path.home() / "nexus"))
+        sys.path.insert(0, str(Path(nexus_home) / "scripts"))
+        from setup_keys import has_any_keys, inject_keys
+        inject_keys()  # Always inject saved keys at startup
+        if not has_any_keys():
+            print(f"\n  \033[1;36mFirst time? Set up cloud model access for smarter responses.\033[0m")
+            print(f"  \033[2mType /keys to configure, or press Enter to skip.\033[0m\n")
+    except Exception:
+        pass
+
 def chat_loop(term, cfg):
     """Interactive chat with Nexus."""
     rst = term.reset()
@@ -642,6 +676,9 @@ def chat_loop(term, cfg):
     chat_cfg = cfg["chat"]
     ollama_url = chat_cfg["ollama_url"]
     has_ollama = ollama_available(ollama_url)
+
+    # Inject saved API keys and check first run
+    _check_first_run()
 
     # Try to use the model router for intelligent routing
     router = _init_router()
@@ -691,6 +728,23 @@ def chat_loop(term, cfg):
         if user_input.lower() in ("exit", "quit", "/quit", "/exit"):
             sys.stdout.write(term.fg(*dim_c) + "  [goodbye]\n" + rst)
             break
+        if user_input.lower() in ("/keys", "/setup"):
+            _run_key_setup()
+            # Reinitialize router to pick up new keys
+            router = _init_router()
+            use_router = router is not None
+            has_backend = has_ollama or (use_router and router.get_available_models().get("anthropic"))
+            continue
+        if user_input.lower() in ("/update", "/upgrade"):
+            _run_updater()
+            continue
+        if user_input.lower() in ("/help", "/commands"):
+            sys.stdout.write(term.fg(*dim_c) + "\n  Commands:\n")
+            sys.stdout.write("    /keys     — Configure API keys for cloud models\n")
+            sys.stdout.write("    /update   — Update Nexus to the latest version\n")
+            sys.stdout.write("    /help     — Show this help\n")
+            sys.stdout.write("    /quit     — Exit Nexus\n" + rst + "\n")
+            continue
 
         history.append(user_input)
 
