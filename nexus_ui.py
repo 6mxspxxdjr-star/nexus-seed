@@ -738,12 +738,31 @@ def chat_loop(term, cfg):
         if user_input.lower() in ("/update", "/upgrade"):
             _run_updater()
             continue
+        if user_input.lower() in ("/dashboard", "/gui", "/ui"):
+            sys.stdout.write(term.fg(*dim_c) + "  [launching dashboard on http://127.0.0.1:3800]\n" + rst)
+            try:
+                import subprocess
+                nexus_home = os.environ.get("NEXUS_HOME", str(Path.home() / "nexus"))
+                dash_script = Path(nexus_home) / "nexus_dashboard.py"
+                if not dash_script.exists():
+                    dash_script = Path(__file__).parent / "nexus_dashboard.py"
+                if dash_script.exists():
+                    subprocess.Popen(
+                        [sys.executable, str(dash_script), "--port", "3800"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                else:
+                    sys.stdout.write(term.fg(*dim_c) + "  [nexus_dashboard.py not found]\n" + rst)
+            except Exception as e:
+                sys.stdout.write(term.fg(*dim_c) + f"  [dashboard error: {e}]\n" + rst)
+            continue
         if user_input.lower() in ("/help", "/commands"):
             sys.stdout.write(term.fg(*dim_c) + "\n  Commands:\n")
-            sys.stdout.write("    /keys     — Configure API keys for cloud models\n")
-            sys.stdout.write("    /update   — Update Nexus to the latest version\n")
-            sys.stdout.write("    /help     — Show this help\n")
-            sys.stdout.write("    /quit     — Exit Nexus\n" + rst + "\n")
+            sys.stdout.write("    /keys      — Configure API keys for cloud models\n")
+            sys.stdout.write("    /update    — Update Nexus to the latest version\n")
+            sys.stdout.write("    /dashboard — Open the visual dashboard in browser\n")
+            sys.stdout.write("    /help      — Show this help\n")
+            sys.stdout.write("    /quit      — Exit Nexus\n" + rst + "\n")
             continue
 
         history.append(user_input)

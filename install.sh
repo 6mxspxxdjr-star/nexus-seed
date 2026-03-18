@@ -258,7 +258,7 @@ fi
 # ============================================================================
 step "Creating Directory Structure"
 
-mkdir -p "$NEXUS_HOME"/{memory/{00_Core,01_Conversations,02_Research,03_Content,04_Simulations,05_Decisions,06_Archive,.system/{chroma,reports}},agents/{strategist,guardian,worker,evolution},skills/{search-memory,store-memory,ask-questions,create-agent,run-simulation,guardian-review,trading-simulator,lead-generator,content-creator},configs,scripts,simulations,optimizer}
+mkdir -p "$NEXUS_HOME"/{memory/{00_Core,01_Conversations,02_Research,03_Content,04_Simulations,05_Decisions,06_Archive,.system/{chroma,reports,rl_signals/batches}},agents/{strategist,guardian,worker,evolution},skills/{search-memory,store-memory,ask-questions,create-agent,run-simulation,guardian-review,trading-simulator,lead-generator,content-creator},configs/sandbox,scripts,simulations,optimizer}
 
 ok "Directory structure created at $NEXUS_HOME"
 
@@ -291,6 +291,7 @@ log "Installing Python packages (this may take a few minutes)..."
     pyyaml \
     requests \
     numpy \
+    nicegui \
     || warn "Some packages failed to install — check log for details"
 
 # Try optional packages (may not be available)
@@ -403,10 +404,14 @@ if [[ "$FROM_REPO" == true ]]; then
 
     # Configs
     cp "$SCRIPT_DIR/configs/"*.yaml "$NEXUS_HOME/configs/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/configs/sandbox/"*.yaml "$NEXUS_HOME/configs/sandbox/" 2>/dev/null || true
 
     # Optimizer
     cp "$SCRIPT_DIR/optimizer/train.py" "$NEXUS_HOME/optimizer/"
     cp "$SCRIPT_DIR/optimizer/config.yaml" "$NEXUS_HOME/optimizer/"
+
+    # Dashboard
+    cp "$SCRIPT_DIR/nexus_dashboard.py" "$NEXUS_HOME/" 2>/dev/null || true
 
     # README
     cp "$SCRIPT_DIR/README.md" "$NEXUS_HOME/" 2>/dev/null || true
@@ -740,6 +745,58 @@ qmd:
     - path: "${NEXUS_HOME}/memory"
       recursive: true
       extensions: [".md"]
+EOF
+
+    # --- Sandbox policies ---
+    mkdir -p "$NEXUS_HOME/configs/sandbox"
+
+    cat > "$NEXUS_HOME/configs/sandbox/filesystem.yaml" << 'EOF'
+allowed_paths:
+  - "${NEXUS_HOME}/memory"
+  - "${NEXUS_HOME}/configs"
+  - "${NEXUS_HOME}/optimizer"
+  - "/tmp"
+read_only_paths:
+  - "${NEXUS_HOME}/agents"
+  - "${NEXUS_HOME}/skills"
+  - "${NEXUS_HOME}/scripts"
+denied_paths:
+  - "/etc/shadow"
+  - "/etc/passwd"
+  - "~/.ssh"
+  - "~/.gnupg"
+  - "~/.aws/credentials"
+  - "~/.config/gcloud"
+EOF
+
+    cat > "$NEXUS_HOME/configs/sandbox/network.yaml" << 'EOF'
+allowed_endpoints:
+  - host: "localhost"
+    port: 11434
+    protocol: "http"
+  - host: "api.anthropic.com"
+    port: 443
+    protocol: "https"
+blocked_ranges: []
+allow_localhost: true
+EOF
+
+    cat > "$NEXUS_HOME/configs/sandbox/process.yaml" << 'EOF'
+max_concurrent_agents: 5
+max_execution_seconds: 1800
+max_memory_mb: 2048
+denied_syscalls: [ptrace, mount, umount, reboot, swapon, kexec_load, init_module]
+allow_privilege_escalation: false
+EOF
+
+    cat > "$NEXUS_HOME/configs/sandbox/inference.yaml" << 'EOF'
+approved_backends:
+  - provider: "ollama"
+    endpoint: "http://localhost:11434"
+    models: ["qwen2.5:0.5b", "qwen2.5:7b"]
+require_router: true
+max_tokens_per_request: 8192
+rate_limit_rpm: 60
 EOF
 
     # --- Optimizer ---
