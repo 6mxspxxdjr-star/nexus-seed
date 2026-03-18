@@ -4,16 +4,16 @@ Source repository for the Nexus Autonomous Intelligence System installer.
 
 ## Install
 
-### From this repository (recommended)
+### One-command install
 ```bash
-git clone <this-repo> nexus-seed
-cd nexus-seed
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/6mxspxxdjr-star/nexus-seed/master/install.sh | bash
 ```
 
-### One-command install (after hosting)
+### From this repository
 ```bash
-curl -fsSL https://nexus.build/install.sh | bash
+git clone https://github.com/6mxspxxdjr-star/nexus-seed.git
+cd nexus-seed
+bash install.sh
 ```
 
 ## What Gets Installed

@@ -2,7 +2,7 @@
 # ============================================================================
 # Nexus Installer
 #
-# One-command install: curl -fsSL https://nexus.build/install.sh | bash
+# One-command install: curl -fsSL https://raw.githubusercontent.com/6mxspxxdjr-star/nexus-seed/master/install.sh | bash
 #
 # This script:
 #   1. Detects OS and architecture
@@ -330,6 +330,11 @@ else
     ollama pull nomic-embed-text 2>/dev/null && ok "nomic-embed-text ready" \
         || warn "Failed to pull nomic-embed-text"
 
+    # Pull classifier model (always needed for model router)
+    log "Pulling qwen2.5:0.5b (router classifier)..."
+    ollama pull qwen2.5:0.5b 2>/dev/null && ok "qwen2.5:0.5b ready" \
+        || warn "Failed to pull qwen2.5:0.5b"
+
     # Pull LLM
     log "Pulling $OLLAMA_LLM (this may take a while for first download)..."
     ollama pull "$OLLAMA_LLM" 2>/dev/null && ok "$OLLAMA_LLM ready" \
@@ -404,13 +409,22 @@ if [[ "$FROM_REPO" == true ]]; then
 
     ok "All files deployed from repository"
 else
-    # Generate files inline (for curl | bash install)
-    log "Generating files inline..."
+    # Running standalone (curl | bash) — clone repo and re-run from there
+    log "Standalone install detected. Cloning nexus-seed repo for full install..."
+    CLONE_DIR="$(mktemp -d)/nexus-seed"
+    if command -v git &>/dev/null; then
+        git clone --depth 1 https://github.com/6mxspxxdjr-star/nexus-seed.git "$CLONE_DIR" \
+            && ok "Repository cloned to $CLONE_DIR" \
+            && exec bash "$CLONE_DIR/install.sh" \
+            || warn "Git clone failed, falling back to minimal bootstrap"
+    else
+        warn "git not found, falling back to minimal bootstrap"
+    fi
 
-    # --- memory_system.py ---
-    # This is the core memory system - too large for heredoc, fetch from release
+    # Fallback: generate files inline
+    log "Generating files inline..."
     warn "Standalone install: generating minimal bootstrap files."
-    warn "For the full install, clone the nexus-seed repository and run ./install.sh"
+    warn "For the full install: git clone https://github.com/6mxspxxdjr-star/nexus-seed.git && cd nexus-seed && bash install.sh"
 
     cat > "$NEXUS_HOME/scripts/memory_system.py" << 'MEMORY_SYSTEM_EOF'
 #!/usr/bin/env python3
@@ -708,8 +722,11 @@ orchestrator:
   version: "1.0.0"
   llm:
     provider: ollama
-    model: qwen2.5:14b
+    model: auto
     endpoint: http://localhost:11434
+  model_routing:
+    enabled: true
+    classifier_model: "qwen2.5:0.5b"
 EOF
 
     cat > "$NEXUS_HOME/configs/qmd.yaml" << 'EOF'
