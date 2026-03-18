@@ -46,6 +46,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 TIERS = {
     "local_small": {"provider": "ollama", "model": "qwen2.5:0.5b"},
     "local_large": {"provider": "ollama", "model": "qwen2.5:7b"},
+    "local_max": {"provider": "ollama", "model": "qwen2.5:14b"},
     "local_code": {"provider": "ollama", "model": "qwen2.5-coder:7b"},
     "cloud_economy": {"provider": "anthropic", "model": "claude-sonnet-4-20250514"},
     "cloud_premium": {"provider": "anthropic", "model": "claude-opus-4-20250514"},
@@ -56,12 +57,12 @@ ROUTING_TABLE = {
     "simple_qa": {
         "low": "local_small",
         "medium": "local_large",
-        "high": "cloud_economy",
-        "critical": "cloud_premium",
+        "high": "local_max",
+        "critical": "cloud_economy",
     },
     "content_gen": {
         "low": "local_large",
-        "medium": "local_large",
+        "medium": "local_max",
         "high": "cloud_economy",
         "critical": "cloud_premium",
     },
@@ -73,20 +74,20 @@ ROUTING_TABLE = {
     },
     "analysis": {
         "low": "local_large",
-        "medium": "cloud_economy",
-        "high": "cloud_premium",
+        "medium": "local_max",
+        "high": "cloud_economy",
         "critical": "cloud_premium",
     },
     "safety": {
         "low": "local_large",
-        "medium": "cloud_economy",
+        "medium": "local_max",
         "high": "cloud_premium",
         "critical": "cloud_premium",
     },
     "financial": {
         "low": "local_large",
-        "medium": "cloud_economy",
-        "high": "cloud_premium",
+        "medium": "local_max",
+        "high": "cloud_economy",
         "critical": "cloud_premium",
     },
 }
@@ -101,8 +102,9 @@ KEYWORD_HINTS = {
 }
 
 COMPLEXITY_KEYWORDS = {
-    "high": ["detailed", "comprehensive", "thorough", "in-depth", "2000 word", "complex", "advanced"],
-    "low": ["what is", "define", "simple", "quick", "yes or no", "how many", "when did"],
+    "critical": ["deploy", "production", "approve", "live", "$", "50k", "100k", "million", "launch", "go live"],
+    "high": ["detailed", "comprehensive", "thorough", "in-depth", "2000 word", "complex", "advanced", "review", "strategy", "recommend"],
+    "low": ["what is", "define", "simple", "quick", "yes or no", "how many", "when did", "hello", "hi", "hey"],
 }
 
 
@@ -136,8 +138,27 @@ class ModelRouter:
         self.home = Path(nexus_home or os.environ.get("NEXUS_HOME", Path.home() / "nexus"))
         self.ollama_url = OLLAMA_URL
         self._available_models = None
+
+        # Load keys: environment takes priority, then keys.json file
         self._anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         self._openai_key = os.environ.get("OPENAI_API_KEY")
+        self._load_saved_keys()
+
+    def _load_saved_keys(self):
+        """Load API keys from ~/nexus/configs/keys.json if not in environment."""
+        keys_file = self.home / "configs" / "keys.json"
+        if not keys_file.exists():
+            return
+        try:
+            keys = json.loads(keys_file.read_text())
+            if not self._anthropic_key and keys.get("anthropic"):
+                self._anthropic_key = keys["anthropic"]
+                os.environ["ANTHROPIC_API_KEY"] = keys["anthropic"]
+            if not self._openai_key and keys.get("openai"):
+                self._openai_key = keys["openai"]
+                os.environ["OPENAI_API_KEY"] = keys["openai"]
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # ========================================================================
     # Public API
@@ -268,10 +289,19 @@ class ModelRouter:
     def _classify_with_model(self, task: str, model: str) -> Optional[dict]:
         """Use 0.5b model for fast JSON classification."""
         classify_prompt = (
-            'Classify this task. Respond ONLY with JSON.\n'
-            '{"type":"<simple_qa|content_gen|code|analysis|safety|financial>",'
-            '"complexity":"<low|medium|high|critical>"}\n'
-            f'Task: {task[:500]}'
+            'Classify this task into type and complexity. Reply ONLY with JSON, nothing else.\n'
+            'Types: simple_qa (factual questions), content_gen (writing/creating), '
+            'code (programming), analysis (research/comparison), '
+            'safety (deletions/deployments/security), financial (money/trading/investments)\n'
+            'Complexity: low (quick/trivial), medium (moderate effort), '
+            'high (detailed/thorough/important), critical (high-stakes/production/large money)\n'
+            'Examples:\n'
+            '"What is Python?" -> {"type":"simple_qa","complexity":"low"}\n'
+            '"Write a blog post about AI" -> {"type":"content_gen","complexity":"high"}\n'
+            '"Approve this $50k trade" -> {"type":"financial","complexity":"critical"}\n'
+            '"Deploy to production" -> {"type":"safety","complexity":"critical"}\n'
+            f'Task: {task[:500]}\n'
+            'JSON:'
         )
 
         try:
@@ -324,18 +354,22 @@ class ModelRouter:
                 best_score = score
                 task_type = ttype
 
-        # Detect complexity
+        # Detect complexity (check critical first, then high, then low)
         complexity = "medium"
-        if len(task.split()) < 8:
-            complexity = "low"
-        for kw in COMPLEXITY_KEYWORDS.get("high", []):
+        for kw in COMPLEXITY_KEYWORDS.get("critical", []):
             if kw in task_lower:
-                complexity = "high"
+                complexity = "critical"
                 break
-        for kw in COMPLEXITY_KEYWORDS.get("low", []):
-            if kw in task_lower:
-                complexity = "low"
-                break
+        if complexity == "medium":
+            for kw in COMPLEXITY_KEYWORDS.get("high", []):
+                if kw in task_lower:
+                    complexity = "high"
+                    break
+        if complexity == "medium" and len(task.split()) < 8:
+            for kw in COMPLEXITY_KEYWORDS.get("low", []):
+                if kw in task_lower:
+                    complexity = "low"
+                    break
 
         return {"type": task_type, "complexity": complexity, "_source": "heuristic"}
 
@@ -378,7 +412,7 @@ class ModelRouter:
                 return tier_name, "openai", tier_def["model"]
 
         # Fallback chain: try each tier from cloud down to local
-        fallback_order = ["cloud_economy", "local_large", "local_code", "local_small"]
+        fallback_order = ["cloud_economy", "local_max", "local_large", "local_code", "local_small"]
         for fb_tier in fallback_order:
             fb_def = TIERS[fb_tier]
             if fb_def["provider"] == "ollama" and fb_def["model"] in available["ollama"]:
