@@ -6,7 +6,7 @@
     One-command install:
     powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/6mxspxxdjr-star/nexus-seed/master/install.ps1 | iex"
 #>
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # === Configuration ===
@@ -51,11 +51,18 @@ function Test-Command($cmd) {
     return $?
 }
 
+# === Helper: Run native command, suppress stderr noise ===
+function Invoke-Native {
+    param([string]$Command, [string[]]$Args)
+    $output = & $Command @Args 2>&1
+    return $LASTEXITCODE
+}
+
 # === Helper: winget install with retry ===
 function Install-Winget($id, $name) {
     if (Test-Command "winget") {
         Log "Installing $name via winget..."
-        winget install --id $id --accept-package-agreements --accept-source-agreements --silent 2>$null
+        $null = & winget install --id $id --accept-package-agreements --accept-source-agreements --silent 2>&1
         if ($LASTEXITCODE -eq 0) { Ok "$name installed" } else { Warn "$name install may need manual action" }
     } else {
         Warn "winget not available. Please install $name manually."
@@ -72,14 +79,14 @@ if (-not (Test-Command "git")) {
     Install-Winget "Git.Git" "Git"
     $env:Path = "$env:Path;$env:ProgramFiles\Git\cmd"
 }
-if (Test-Command "git") { Ok "Git: $(git --version 2>&1)" } else { Err "Git not found - install from https://git-scm.com" }
+if (Test-Command "git") { $gv = (& git --version 2>&1) -join ""; Ok "Git: $gv" } else { Err "Git not found - install from https://git-scm.com" }
 
 # --- Python ---
 $PythonCmd = $null
 foreach ($cmd in @("python3.12", "python3.11", "python3", "python", "py")) {
     if (Test-Command $cmd) {
         try {
-            $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+            $ver = (& $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1) -join ""
             $parts = $ver -split '\.'
             if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 11) {
                 $PythonCmd = $cmd
@@ -91,7 +98,7 @@ foreach ($cmd in @("python3.12", "python3.11", "python3", "python", "py")) {
 # Try py launcher
 if (-not $PythonCmd -and (Test-Command "py")) {
     try {
-        $ver = & py -3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+        $ver = (& py -3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1) -join ""
         $parts = $ver -split '\.'
         if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 11) { $PythonCmd = "py -3" }
     } catch {}
@@ -102,7 +109,7 @@ if (-not $PythonCmd) {
     $PythonCmd = "python"
 }
 if ($PythonCmd) {
-    $pyver = & $PythonCmd -c "import sys; print(sys.version)" 2>$null
+    $pyver = (& $PythonCmd -c "import sys; print(sys.version)" 2>&1) -join ""
     Ok "Python: $pyver"
 } else { Err "Python 3.11+ not found" }
 
@@ -111,14 +118,14 @@ if (-not (Test-Command "node")) {
     Install-Winget "OpenJS.NodeJS" "Node.js"
     $env:Path = "$env:Path;$env:ProgramFiles\nodejs"
 }
-if (Test-Command "node") { Ok "Node: $(node --version 2>&1)" } else { Warn "Node.js not installed (optional)" }
+if (Test-Command "node") { $nv = (& node --version 2>&1) -join ""; Ok "Node: $nv" } else { Warn "Node.js not installed (optional)" }
 
 # --- Ollama ---
 if (-not (Test-Command "ollama")) {
     Install-Winget "Ollama.Ollama" "Ollama"
     $env:Path = "$env:Path;$env:LOCALAPPDATA\Programs\Ollama"
 }
-if (Test-Command "ollama") { Ok "Ollama: $(ollama --version 2>&1)" } else { Warn "Ollama not found - install from https://ollama.com" }
+if (Test-Command "ollama") { $ov = (& ollama --version 2>&1) -join ""; Ok "Ollama: $ov" } else { Warn "Ollama not found - install from https://ollama.com" }
 
 # ============================================================================
 # DIRECTORY STRUCTURE
@@ -159,14 +166,15 @@ if (-not (Test-Path $VenvPython)) {
     Ok "Virtual environment already exists"
 }
 
-Log "Installing Python packages..."
-& $VenvPip install --upgrade pip setuptools wheel -q 2>$null
-& $VenvPip install -q chromadb sentence-transformers pyyaml requests numpy 2>$null
+Log "Upgrading pip..."
+$null = & $VenvPip install --upgrade pip setuptools wheel -q 2>&1
+Log "Installing Python packages (this may take a few minutes)..."
+$null = & $VenvPip install -q chromadb sentence-transformers pyyaml requests numpy 2>&1
 if ($LASTEXITCODE -eq 0) { Ok "Python packages installed" } else { Warn "Some packages may have failed" }
 
 # Optional packages
 foreach ($pkg in @("engramai[all]", "agentmem")) {
-    & $VenvPip install -q $pkg 2>$null
+    $null = & $VenvPip install -q $pkg 2>&1
     if ($LASTEXITCODE -ne 0) { Warn "Optional package $pkg not available" }
 }
 
@@ -187,8 +195,9 @@ if ($SkipModels) {
     }
 
     foreach ($model in @("nomic-embed-text", "qwen2.5:0.5b", $OllamaLLM)) {
-        Log "Pulling $model..."
-        & ollama pull $model 2>$null
+        Log "Pulling $model (this may take a while)..."
+        & ollama pull $model 2>&1 | ForEach-Object { if ($_ -match '\d+%') { Write-Host "`r  $($_)" -NoNewline } }
+        Write-Host ""
         if ($LASTEXITCODE -eq 0) { Ok "$model ready" } else { Warn "Failed to pull $model" }
     }
 } else {
@@ -213,7 +222,7 @@ if (-not $FromRepo) {
     Log "Cloning nexus-seed repository..."
     $CloneDir = "$env:TEMP\nexus-seed-$(Get-Random)"
     if (Test-Command "git") {
-        git clone --depth 1 https://github.com/6mxspxxdjr-star/nexus-seed.git $CloneDir 2>$null
+        $null = & git clone --depth 1 https://github.com/6mxspxxdjr-star/nexus-seed.git $CloneDir 2>&1
         if ($LASTEXITCODE -eq 0) {
             $ScriptDir = $CloneDir
             $FromRepo = $true
@@ -246,14 +255,14 @@ if ($FromRepo) {
     }
 
     # Configs
-    Copy-Item "$ScriptDir\configs\*.yaml" "$NexusHome\configs\" -Force 2>$null
+    Copy-Item "$ScriptDir\configs\*.yaml" "$NexusHome\configs\" -Force -ErrorAction SilentlyContinue
     if (Test-Path "$ScriptDir\configs\sandbox") {
-        Copy-Item "$ScriptDir\configs\sandbox\*" "$NexusHome\configs\sandbox\" -Force 2>$null
+        Copy-Item "$ScriptDir\configs\sandbox\*" "$NexusHome\configs\sandbox\" -Force -ErrorAction SilentlyContinue
     }
 
     # Optimizer
     if (Test-Path "$ScriptDir\optimizer") {
-        Copy-Item "$ScriptDir\optimizer\*" "$NexusHome\optimizer\" -Force 2>$null
+        Copy-Item "$ScriptDir\optimizer\*" "$NexusHome\optimizer\" -Force -ErrorAction SilentlyContinue
     }
 
     # UI & launcher
