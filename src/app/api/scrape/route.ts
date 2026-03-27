@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ingestGoplacesLeads } from '@/lib/ingest-leads'
 import { NextRequest } from 'next/server'
 import { exec } from 'child_process'
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Failed to parse goplaces output' }, { status: 500 })
   }
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { inserted, duplicates, skipped_inactive } = await ingestGoplacesLeads(
     places as Parameters<typeof ingestGoplacesLeads>[0],
     supabase

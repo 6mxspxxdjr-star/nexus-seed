@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
 
 const VALID_FIELDS = [
@@ -8,7 +8,7 @@ const VALID_FIELDS = [
 ]
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const body = await request.json()
   const { leads } = body

@@ -1,10 +1,10 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { NextResponse } from 'next/server'
 import { writeFile } from 'fs/promises'
 import path from 'path'
 
 export async function POST() {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { data: leads, error } = await supabase.from('leads').select('*')
 
   if (error) {

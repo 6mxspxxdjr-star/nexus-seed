@@ -1,11 +1,11 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 const STATUS_ORDER: Record<string, number> = { new: 0, follow_up: 1, contacted: 2 }
 
 export async function GET(request: NextRequest) {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { searchParams } = new URL(request.url)
   const assignedToParam = searchParams.get('assigned_to')
   const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 200)

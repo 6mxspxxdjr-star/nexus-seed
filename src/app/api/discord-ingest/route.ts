@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ingestGoplacesLeads, type GoplacesPlace } from '@/lib/ingest-leads'
 import { NextRequest } from 'next/server'
 
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json()
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   // goplaces format: { places: GoplacesPlace[] }
   if (Array.isArray(body.places)) {
