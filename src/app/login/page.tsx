@@ -9,43 +9,42 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Wind } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+
+// Username → email mapping
+const USERS: Record<string, string> = {
+  aidan: 'aidan@leadflow.app',
+  dylan: 'dylan@leadflow.app',
+}
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
   const supabase = createClient()
-
-  const getRedirectURL = () => {
-    // Always use the explicitly set site URL in production
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
-    if (siteUrl) return `${siteUrl}/auth/callback`
-    // Fallback to current origin (works locally)
-    if (typeof window !== 'undefined') return `${window.location.origin}/auth/callback`
-    return '/auth/callback'
-  }
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
 
-    const redirectTo = getRedirectURL()
+    const email = USERS[username.toLowerCase().trim()]
+    if (!email) {
+      setError('Unknown username. Try "aidan" or "dylan".')
+      setLoading(false)
+      return
+    }
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: redirectTo,
-      },
-    })
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setError(error.message)
+      setError('Invalid username or password.')
       setLoading(false)
     } else {
-      setSent(true)
-      setLoading(false)
+      router.push('/dashboard')
+      router.refresh()
     }
   }
 
@@ -63,44 +62,46 @@ export default function LoginPage() {
           <CardHeader>
             <CardTitle className="text-white">Sign in</CardTitle>
             <CardDescription className="text-gray-400">
-              Enter your email and we&apos;ll send you a magic link
+              Enter your username and password
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {sent ? (
-              <div className="text-center py-4">
-                <div className="w-12 h-12 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                </div>
-                <p className="text-white font-medium mb-1">Check your email</p>
-                <p className="text-gray-400 text-sm">We sent a magic link to {email}</p>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="username" className="text-gray-300">Username</Label>
+                <Input
+                  id="username"
+                  type="text"
+                  placeholder="aidan or dylan"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  className="bg-gray-800 border-gray-700 text-white placeholder:text-gray-500 focus:border-indigo-500"
+                />
               </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-gray-300">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="bg-gray-800 border-gray-700 text-white placeholder:text-gray-500 focus:border-indigo-500"
-                  />
-                </div>
-                {error && <p className="text-red-400 text-sm">{error}</p>}
-                <Button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                >
-                  {loading ? 'Sending...' : 'Send magic link'}
-                </Button>
-              </form>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-gray-300">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="bg-gray-800 border-gray-700 text-white placeholder:text-gray-500 focus:border-indigo-500"
+                />
+              </div>
+              {error && <p className="text-red-400 text-sm">{error}</p>}
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {loading ? 'Signing in...' : 'Sign in'}
+              </Button>
+            </form>
           </CardContent>
         </Card>
       </div>
