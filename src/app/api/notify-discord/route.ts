@@ -23,26 +23,29 @@ interface SupabaseWebhookPayload {
   schema: string
 }
 
-async function postToDiscord(message: string): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL
-  if (!webhookUrl) {
-    console.error('DISCORD_WEBHOOK_URL is not set')
-    return
-  }
-
+async function postToDiscord(webhookUrl: string, message: string): Promise<void> {
   try {
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: message, username: 'LeadFlow' }),
     })
-
     if (!response.ok) {
       console.error(`Discord webhook failed: ${response.status} ${await response.text()}`)
     }
   } catch (err) {
     console.error('Discord webhook error:', err)
   }
+}
+
+async function postToScraping(message: string): Promise<void> {
+  const url = process.env.DISCORD_WEBHOOK_URL_SCRAPING || process.env.DISCORD_WEBHOOK_URL
+  if (url) await postToDiscord(url, message)
+}
+
+async function postToOutreach(message: string): Promise<void> {
+  const url = process.env.DISCORD_WEBHOOK_URL_OUTREACH || process.env.DISCORD_WEBHOOK_URL
+  if (url) await postToDiscord(url, message)
 }
 
 function formatAmount(amount?: number | null): string {
@@ -57,21 +60,19 @@ function buildStatusChangeMessage(record: Lead, oldRecord: Lead): string | null 
   const amount = record.estimated_deal_size
 
   if (oldStatus === newStatus) return null
+  if (newStatus === 'dead') return null // silent
 
   if (oldStatus === 'new' && newStatus === 'contacted') {
-    return `📞 ${company} — first contact made`
+    return `📞 **${company}** — first contact made`
   }
-  if (oldStatus === 'contacted' && newStatus === 'follow_up') {
-    return `🔄 ${company} — follow-up scheduled`
+  if (newStatus === 'follow_up') {
+    return `🔄 **${company}** — follow-up scheduled`
   }
   if (newStatus === 'quoted') {
-    return `💰 ${company} — quoted ${formatAmount(amount)}`
+    return `💰 **${company}** — quoted ${formatAmount(amount)}`
   }
   if (newStatus === 'closed_won') {
-    return `🎉 ${company} — CLOSED! ${formatAmount(amount)}`
-  }
-  if (newStatus === 'dead') {
-    return `💀 ${company} — marked dead`
+    return `🎉 **${company}** — CLOSED! ${formatAmount(amount)}`
   }
 
   return null
@@ -98,12 +99,12 @@ export async function POST(request: NextRequest) {
     const state = record.state || ''
     const location = [city, state].filter(Boolean).join(', ')
     const phone = record.phone || 'no phone'
-    const message = `🆕 New lead: ${record.company_name}${location ? ` (${location})` : ''} — ${phone}`
-    await postToDiscord(message)
+    const message = `🆕 New lead: **${record.company_name}**${location ? ` (${location})` : ''} — ${phone}`
+    await postToScraping(message)
   } else if (type === 'UPDATE' && old_record) {
     const message = buildStatusChangeMessage(record, old_record)
     if (message) {
-      await postToDiscord(message)
+      await postToOutreach(message)
     }
   }
 

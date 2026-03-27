@@ -4,15 +4,17 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Users, Phone, Calendar, TrendingUp, Plus } from 'lucide-react'
+import { Users, Phone, Calendar, TrendingUp, Plus, Kanban } from 'lucide-react'
 import LeadCard from '@/components/lead-card'
 import LeadForm from '@/components/lead-form'
+import CallQueue from '@/components/call-queue'
 import type { Lead, LeadStatus } from '@/types'
 
 const KANBAN_COLUMNS: { status: LeadStatus; label: string }[] = [
@@ -94,31 +96,53 @@ export default function DashboardClient({ leads, stats }: DashboardClientProps) 
         ))}
       </div>
 
-      <div>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Pipeline</h2>
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {KANBAN_COLUMNS.map(col => (
-            <div key={col.status} className="flex-shrink-0 w-64">
-              <div className="flex items-center justify-between mb-2 px-1">
-                <span className={`text-sm font-semibold ${COLUMN_COLORS[col.status]}`}>{col.label}</span>
-                <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded font-medium">
-                  {grouped[col.status]?.length || 0}
-                </span>
+      <Tabs defaultValue="pipeline">
+        <TabsList className="bg-gray-900 border border-gray-800">
+          <TabsTrigger
+            value="pipeline"
+            className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400 gap-2"
+          >
+            <Kanban className="w-3.5 h-3.5" />
+            Pipeline
+          </TabsTrigger>
+          <TabsTrigger
+            value="call-queue"
+            className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400 gap-2"
+          >
+            <Phone className="w-3.5 h-3.5" />
+            Call Queue
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pipeline" className="mt-4">
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {KANBAN_COLUMNS.map(col => (
+              <div key={col.status} className="flex-shrink-0 w-64">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <span className={`text-sm font-semibold ${COLUMN_COLORS[col.status]}`}>{col.label}</span>
+                  <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded font-medium">
+                    {grouped[col.status]?.length || 0}
+                  </span>
+                </div>
+                <div className="space-y-2 min-h-[100px]">
+                  {(grouped[col.status] || []).map(lead => (
+                    <LeadCard key={lead.id} lead={lead} />
+                  ))}
+                  {(grouped[col.status] || []).length === 0 && (
+                    <div className="border border-dashed border-gray-800 rounded-lg p-4 text-center">
+                      <p className="text-gray-600 text-xs">No leads</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="space-y-2 min-h-[100px]">
-                {(grouped[col.status] || []).map(lead => (
-                  <LeadCard key={lead.id} lead={lead} />
-                ))}
-                {(grouped[col.status] || []).length === 0 && (
-                  <div className="border border-dashed border-gray-800 rounded-lg p-4 text-center">
-                    <p className="text-gray-600 text-xs">No leads</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="call-queue" className="mt-4">
+          <CallQueue />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={addLeadOpen} onOpenChange={setAddLeadOpen}>
         <DialogContent className="bg-gray-900 border-gray-800 text-white max-w-2xl max-h-[90vh] overflow-y-auto">

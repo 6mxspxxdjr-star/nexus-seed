@@ -1,17 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
+import { ingestGoplacesLeads, type GoplacesPlace } from '@/lib/ingest-leads'
 import { NextRequest } from 'next/server'
 
-interface IngestLead {
-  company_name: string
-  contact_name?: string
-  phone?: string
-  email?: string
-  city?: string
-  state?: string
-  zip?: string
-  service_type?: string
-  notes?: string
-  source?: string
+async function postToDiscordOutreach(message: string): Promise<void> {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL_OUTREACH
+  if (!webhookUrl) return
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message, username: 'LeadFlow' }),
+    })
+  } catch (err) {
+    console.error('Discord outreach webhook error:', err)
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -23,24 +25,51 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json()
-  const { leads, discord_channel_id: _channel } = body as {
-    leads: IngestLead[]
-    discord_channel_id?: string
-  }
-
-  if (!Array.isArray(leads) || leads.length === 0) {
-    return Response.json({ error: 'leads array is required' }, { status: 400 })
-  }
-
   const supabase = await createClient()
+
+  // goplaces format: { places: GoplacesPlace[] }
+  if (Array.isArray(body.places)) {
+    const places = body.places as GoplacesPlace[]
+    if (places.length === 0) {
+      return Response.json({ error: 'places array is empty' }, { status: 400 })
+    }
+
+    const { inserted, duplicates, skipped_inactive, leads } = await ingestGoplacesLeads(places, supabase)
+
+    if (inserted > 0) {
+      await postToDiscordOutreach(
+        `📥 Ingested ${inserted} new lead${inserted !== 1 ? 's' : ''} (${duplicates} dupes, ${skipped_inactive} inactive skipped)`
+      )
+    }
+
+    return Response.json({ inserted, duplicates, skipped_inactive, leads })
+  }
+
+  // Legacy format: { leads: LegacyLead[] }
+  interface LegacyLead {
+    company_name: string
+    contact_name?: string
+    phone?: string
+    email?: string
+    city?: string
+    state?: string
+    zip?: string
+    service_type?: string
+    notes?: string
+  }
+
+  const legacyLeads = body.leads as LegacyLead[] | undefined
+  if (!Array.isArray(legacyLeads) || legacyLeads.length === 0) {
+    return Response.json({ error: 'places or leads array is required' }, { status: 400 })
+  }
+
   let inserted = 0
   let duplicates = 0
   const insertedLeads: unknown[] = []
 
-  for (const lead of leads) {
+  for (const lead of legacyLeads) {
     if (!lead.company_name) continue
 
-    // Check for duplicate: phone match OR company_name + zip match
     let isDuplicate = false
 
     if (lead.phone) {
@@ -49,23 +78,17 @@ export async function POST(request: NextRequest) {
         .select('id')
         .eq('phone', lead.phone)
         .maybeSingle()
-
-      if (phoneMatch) {
-        isDuplicate = true
-      }
+      if (phoneMatch) isDuplicate = true
     }
 
-    if (!isDuplicate && lead.company_name && lead.zip) {
-      const { data: nameZipMatch } = await supabase
+    if (!isDuplicate && lead.company_name && lead.city) {
+      const { data: nameCityMatch } = await supabase
         .from('leads')
         .select('id')
         .eq('company_name', lead.company_name)
-        .eq('zip', lead.zip)
+        .eq('city', lead.city)
         .maybeSingle()
-
-      if (nameZipMatch) {
-        isDuplicate = true
-      }
+      if (nameCityMatch) isDuplicate = true
     }
 
     if (isDuplicate) {
