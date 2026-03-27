@@ -17,15 +17,26 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const supabase = createClient()
 
+  const getRedirectURL = () => {
+    // Always use the explicitly set site URL in production
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+    if (siteUrl) return `${siteUrl}/auth/callback`
+    // Fallback to current origin (works locally)
+    if (typeof window !== 'undefined') return `${window.location.origin}/auth/callback`
+    return '/auth/callback'
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
 
+    const redirectTo = getRedirectURL()
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: redirectTo,
       },
     })
 
