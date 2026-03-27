@@ -46,6 +46,19 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'company_name is required' }, { status: 400 })
   }
 
+  // Deduplication: check for existing lead with same phone
+  if (phone) {
+    const { data: existing } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('phone', phone)
+      .maybeSingle()
+
+    if (existing) {
+      return Response.json({ duplicate: true, existing }, { status: 409 })
+    }
+  }
+
   const { data, error } = await supabase
     .from('leads')
     .insert({
